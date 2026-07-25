@@ -1,0 +1,10 @@
+{
+  "source": "KcaDeckInfo.getAirPowerRange",
+  "slots": [
+    {"position": 1, "itemID": 1, "type": 6, "antiAir": 10, "aircraftCount": 18, "improvement": 0, "proficiency": 0},
+    {"position": 1, "itemID": 2, "type": 8, "antiAir": 3, "aircraftCount": 18, "improvement": 0, "proficiency": 7},
+    {"position": 2, "itemID": 60, "type": 7, "antiAir": 4, "aircraftCount": 12, "improvement": 4, "proficiency": 7},
+    {"position": 2, "itemID": 4, "type": 45, "antiAir": 5, "aircraftCount": 4, "improvement": 10, "proficiency": 7}
+  ],
+  "androidGolden": {"minimum": 116, "maximum": 118}
+}

@@ -1,0 +1,9 @@
+{
+  "source": "KcaDeckInfo.getSeekValue/getEquipSeek",
+  "headquartersLevel": 80,
+  "ships": [
+    {"position": 1, "totalSearch": 30, "equipment": [{"type": 10, "search": 8, "improvement": 4}, {"type": 12, "search": 5, "improvement": 9}]},
+    {"position": 2, "totalSearch": 20, "equipment": [{"type": 9, "search": 9, "improvement": 0}]}
+  ],
+  "androidGolden": {"pure": 50.0, "cn1": 10.16, "cn2": 36.89, "cn3": 63.62, "cn4": 90.35}
+}

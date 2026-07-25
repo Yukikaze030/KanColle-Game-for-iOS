@@ -1,0 +1,7 @@
+{
+  "source": "KcaDeckInfo.checkMinimumMorale and KcaFleetViewListItem thresholds",
+  "threshold": 40,
+  "conditions": [50, 49, 39, 29, 19],
+  "states": ["sparkling", "normal", "lightFatigue", "orangeFatigue", "redFatigue"],
+  "minimum": 19
+}
