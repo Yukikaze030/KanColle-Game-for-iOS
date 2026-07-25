@@ -25,13 +25,25 @@ public struct ResourceResponse: Sendable {
         self.statusCode = statusCode; self.headers = headers; self.body = body
     }
     public func serialized() -> Data {
-        var head = "HTTP/1.1 \(statusCode) \(statusCode == 200 ? "OK" : "Not Found")\r\n"
+        var head = "HTTP/1.1 \(statusCode) \(Self.reasonPhrase(for: statusCode))\r\n"
         for (k, v) in headers { head += "\(k): \(v)\r\n" }
         if !headers.contains(where: { $0.0.lowercased() == "content-length" }) {
             head += "Content-Length: \(body.count)\r\n"
         }
         head += "Connection: close\r\n\r\n"
         return Data(head.utf8) + body
+    }
+
+    private static func reasonPhrase(for code: Int) -> String {
+        switch code {
+        case 200: return "OK"
+        case 302: return "Found"
+        case 304: return "Not Modified"
+        case 403: return "Forbidden"
+        case 404: return "Not Found"
+        case 502: return "Bad Gateway"
+        default: return "Response"
+        }
     }
 }
 
@@ -241,7 +253,9 @@ public final class LocalProxyServer: @unchecked Sendable {
             reply(conn, empty.serialized()) { conn.cancel() }
             return
         }
-        if let local = onGameResourceRequest?(head) {
+        // 只有可检查 host（默认 kancolle-server.com:80）才走缓存短路回调；
+        // 其余 host 直接回源转发
+        if isInspectableHost(head.host, head.port), let local = onGameResourceRequest?(head) {
             log(ProxyRequestLog(host: head.host, path: head.path, statusCode: local.statusCode, blocked: false))
             reply(conn, local.serialized()) { conn.cancel() }
             return
@@ -258,7 +272,8 @@ public final class LocalProxyServer: @unchecked Sendable {
             conn.cancel()
             return
         }
-        let contentLength = head.header("content-length").flatMap(Int.init) ?? 0
+        // Content-Length 缺失或非法（含负数）按 0 处理，防 prefix 越界崩溃
+        let contentLength = max(0, head.header("content-length").flatMap(Int.init) ?? 0)
         collectBody(conn, already: leftover, total: contentLength) { [weak self] body in
             guard let self, let body else { conn.cancel(); return }
             let upstream = NWConnection(host: NWEndpoint.Host(head.host), port: nwPort, using: .tcp)
@@ -316,6 +331,9 @@ public final class LocalProxyServer: @unchecked Sendable {
         }
     }
 
+    /// P1 简化假设：响应全量缓冲进内存（单个游戏资源最大十几 MB 级），
+    /// 以 Connection: close 的上游 EOF 作为响应结束信号，再一次回传给客户端。
+    /// 后续任务若遇内存压力可改为流式转发（边收边发 + 按头解析结束条件）。
     private func relayResponse(_ conn: NWConnection, upstream: NWConnection,
                                head: ProxyHTTPParser.HTTPRequestHead, buffer: Data) {
         upstream.receive(minimumIncompleteLength: 1, maximumLength: 256 * 1024) { [weak self, weak conn, weak upstream] data, _, isComplete, error in

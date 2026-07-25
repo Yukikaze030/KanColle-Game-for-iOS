@@ -168,6 +168,7 @@ final class LocalProxyIntegrationTests: XCTestCase {
 
         let proxy = LocalProxyServer()
         self.proxy = proxy
+        proxy.isInspectableHost = { _, _ in true }
         proxy.onGameResourceRequest = { _ in
             ResourceResponse(statusCode: 200,
                              headers: [("Content-Type", "text/plain")],
@@ -184,6 +185,84 @@ final class LocalProxyIntegrationTests: XCTestCase {
         XCTAssertNotNil(response)
         XCTAssertTrue(response!.contains("cached"))
         XCTAssertEqual(upstreamCounter.value, 0, "短路响应不应触达上游")
+    }
+
+    func testNonInspectableHostBypassesCallback() throws {
+        // 非检查 host（默认 isInspectableHost 只认 kancolle-server.com:80）不应询问短路回调
+        let upstreamCounter = Counter()
+        let upstream = try startUpstream(
+            response: "HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhello",
+            counter: upstreamCounter)
+        defer { upstream.cancel() }
+        let upstreamPort = waitPort { upstream.port?.rawValue ?? 0 }
+        XCTAssertNotEqual(upstreamPort, 0)
+
+        let proxy = LocalProxyServer()
+        self.proxy = proxy
+        let callbackCalled = Box(false)
+        proxy.onGameResourceRequest = { _ in
+            callbackCalled.set(true)
+            return ResourceResponse(statusCode: 200, headers: [], body: Data("cached".utf8))
+        }
+        try proxy.start()
+        let proxyPort = waitPort { proxy.port }
+        XCTAssertNotEqual(proxyPort, 0)
+
+        let response = roundTrip(
+            port: proxyPort,
+            request: "GET /x.js HTTP/1.1\r\nHost: 127.0.0.1:\(upstreamPort)\r\n\r\n",
+            marker: "hello")
+        XCTAssertNotNil(response)
+        XCTAssertTrue(response!.contains("hello"), "非检查 host 应回源转发")
+        XCTAssertFalse(callbackCalled.value, "非检查 host 不应询问 onGameResourceRequest")
+        XCTAssertEqual(upstreamCounter.value, 1)
+    }
+
+    func testNegativeContentLengthDoesNotCrash() throws {
+        let upstreamCounter = Counter()
+        let upstreamReceived = Box(Data())
+        let upstream = try NWListener(using: .tcp, on: .any)
+        upstream.newConnectionHandler = { conn in
+            upstreamCounter.inc()
+            conn.start(queue: .global())
+            conn.receive(minimumIncompleteLength: 1, maximumLength: 64 * 1024) { data, _, _, _ in
+                if let data { upstreamReceived.set(upstreamReceived.value + data) }
+                conn.send(content: Data("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok".utf8),
+                          completion: .contentProcessed { _ in conn.cancel() })
+            }
+        }
+        upstream.start(queue: .global())
+        defer { upstream.cancel() }
+        let upstreamPort = waitPort { upstream.port?.rawValue ?? 0 }
+        XCTAssertNotEqual(upstreamPort, 0)
+
+        let proxy = LocalProxyServer()
+        self.proxy = proxy
+        try proxy.start()
+        let proxyPort = waitPort { proxy.port }
+        XCTAssertNotEqual(proxyPort, 0)
+
+        let response = roundTrip(
+            port: proxyPort,
+            request: "POST /x HTTP/1.1\r\nHost: 127.0.0.1:\(upstreamPort)\r\nContent-Length: -5\r\n\r\n",
+            marker: "ok")
+        XCTAssertNotNil(response, "非法 Content-Length 不应导致崩溃/无响应")
+        XCTAssertTrue(response!.contains("ok"))
+        XCTAssertEqual(upstreamCounter.value, 1, "非法 Content-Length 按 0 body 转发")
+    }
+
+    func testResourceResponseReasonPhrases() {
+        func firstLine(_ code: Int) -> String {
+            let data = ResourceResponse(statusCode: code, headers: [], body: Data()).serialized()
+            return String(data: data, encoding: .utf8)?.components(separatedBy: "\r\n").first ?? ""
+        }
+        XCTAssertEqual(firstLine(200), "HTTP/1.1 200 OK")
+        XCTAssertEqual(firstLine(302), "HTTP/1.1 302 Found")
+        XCTAssertEqual(firstLine(304), "HTTP/1.1 304 Not Modified")
+        XCTAssertEqual(firstLine(403), "HTTP/1.1 403 Forbidden")
+        XCTAssertEqual(firstLine(404), "HTTP/1.1 404 Not Found")
+        XCTAssertEqual(firstLine(502), "HTTP/1.1 502 Bad Gateway")
+        XCTAssertEqual(firstLine(418), "HTTP/1.1 418 Response")
     }
 
     func testPostBodyForwarding() throws {
