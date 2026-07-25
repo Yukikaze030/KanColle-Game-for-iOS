@@ -98,6 +98,26 @@ public struct SettingsStore {
         set { defaults.set(newValue, forKey: "pref_mem_warn_mb") }
     }
 
+    /// Disabled by default so the safer behavior checks every ship.
+    public var heavyDamageLockedOnly: Bool {
+        get { defaults.bool(forKey: "pref_hdnoti_locked") }
+        set { defaults.set(newValue, forKey: "pref_hdnoti_locked") }
+    }
+
+    public var heavyDamageMinimumLevel: Int {
+        get { max(0, defaults.object(forKey: "pref_hdnoti_minlevel") as? Int ?? 0) }
+        set { defaults.set(max(0, newValue), forKey: "pref_hdnoti_minlevel") }
+    }
+
+    /// Mirrors Kcanotify's 61-second default and caps accidental stale alerts.
+    public var notificationLeadTimeSeconds: Int {
+        get {
+            let value = defaults.object(forKey: "pref_notification_lead_seconds") as? Int ?? 61
+            return min(600, max(0, value))
+        }
+        set { defaults.set(min(600, max(0, newValue)), forKey: "pref_notification_lead_seconds") }
+    }
+
     /// Setting `nil` removes the key (UserDefaults.removeObject semantics).
     public var latestURL: String? {
         get { defaults.string(forKey: "pref_latest_url") }

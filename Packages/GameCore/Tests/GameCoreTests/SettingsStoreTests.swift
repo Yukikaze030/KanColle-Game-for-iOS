@@ -22,7 +22,22 @@ final class SettingsStoreTests: XCTestCase {
         XCTAssertTrue(s.mitmEnabled)
         XCTAssertTrue(s.downloadRetry)
         XCTAssertTrue(s.memoryWarnEnabled)
+        XCTAssertFalse(s.heavyDamageLockedOnly)
+        XCTAssertEqual(s.heavyDamageMinimumLevel, 0)
+        XCTAssertEqual(s.notificationLeadTimeSeconds, 61)
         XCTAssertEqual(s.alterGadgetEndpoint, BrowserConstants.defaultAlterGadgetURL)
+    }
+    func testP2SafetySettingsClampUnsafeValues() {
+        var s = SettingsStore(defaults: makeDefaults())
+        s.heavyDamageLockedOnly = true
+        s.heavyDamageMinimumLevel = -1
+        s.notificationLeadTimeSeconds = 999
+        XCTAssertTrue(s.heavyDamageLockedOnly)
+        XCTAssertEqual(s.heavyDamageMinimumLevel, 0)
+        XCTAssertEqual(s.notificationLeadTimeSeconds, 600)
+
+        s.notificationLeadTimeSeconds = -5
+        XCTAssertEqual(s.notificationLeadTimeSeconds, 0)
     }
     func testRoundTrip() {
         let d = makeDefaults()
