@@ -4,6 +4,8 @@ import XCTest
 @testable import GameCore
 
 final class MitmCATests: XCTestCase {
+    private let metadataAccount = "root.certificate.der"
+
     private func makeService() -> String {
         let service = "test.KanColle.Game.mitm.\(UUID().uuidString)"
         addTeardownBlock {
@@ -14,6 +16,96 @@ final class MitmCATests: XCTestCase {
 
     private func makeCA() -> MitmCA {
         MitmCA(keychainService: makeService())
+    }
+
+    private func deletePrivateKey(service: String) {
+        XCTAssertEqual(
+            SecItemDelete([
+                kSecClass: kSecClassKey,
+                kSecAttrKeyClass: kSecAttrKeyClassPrivate,
+                kSecAttrApplicationTag: Data("\(service).ca".utf8)
+            ] as CFDictionary),
+            errSecSuccess
+        )
+    }
+
+    private func createReplacementPrivateKey(service: String) throws {
+        let attributes: [CFString: Any] = [
+            kSecAttrKeyType: kSecAttrKeyTypeRSA,
+            kSecAttrKeySizeInBits: 2_048,
+            kSecAttrIsPermanent: true,
+            kSecAttrApplicationTag: Data("\(service).ca".utf8),
+            kSecAttrAccessible: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+        ]
+        var error: Unmanaged<CFError>?
+        let key = SecKeyCreateRandomKey(attributes as CFDictionary, &error)
+        if let error {
+            XCTFail("\(error.takeRetainedValue())")
+        }
+        _ = try XCTUnwrap(key)
+    }
+
+    private func deleteMetadata(service: String) {
+        XCTAssertEqual(
+            SecItemDelete([
+                kSecClass: kSecClassGenericPassword,
+                kSecAttrService: service,
+                kSecAttrAccount: metadataAccount
+            ] as CFDictionary),
+            errSecSuccess
+        )
+    }
+
+    private func updateMetadata(service: String, certificateDER: Data) {
+        XCTAssertEqual(
+            SecItemUpdate([
+                kSecClass: kSecClassGenericPassword,
+                kSecAttrService: service,
+                kSecAttrAccount: metadataAccount
+            ] as CFDictionary, [
+                kSecValueData: certificateDER
+            ] as CFDictionary),
+            errSecSuccess
+        )
+    }
+
+    private func certificateQuery(der: Data) throws -> [CFString: Any] {
+        let certificate = try XCTUnwrap(
+            SecCertificateCreateWithData(nil, der as CFData)
+        )
+        let issuer = try XCTUnwrap(
+            SecCertificateCopyNormalizedIssuerSequence(certificate)
+        )
+        var serialError: Unmanaged<CFError>?
+        let serial = try XCTUnwrap(
+            SecCertificateCopySerialNumberData(certificate, &serialError)
+        )
+        XCTAssertNil(serialError?.takeRetainedValue())
+        return [
+            kSecClass: kSecClassCertificate,
+            kSecAttrIssuer: issuer,
+            kSecAttrSerialNumber: serial
+        ]
+    }
+
+    private func deleteCertificate(der: Data) throws {
+        XCTAssertEqual(
+            SecItemDelete(try certificateQuery(der: der) as CFDictionary),
+            errSecSuccess
+        )
+    }
+
+    private func certificateExists(der: Data) throws -> Bool {
+        var query = try certificateQuery(der: der)
+        query[kSecReturnRef] = true
+        query[kSecMatchLimit] = kSecMatchLimitOne
+        var result: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        if status == errSecItemNotFound {
+            return false
+        }
+        XCTAssertEqual(status, errSecSuccess)
+        return status == errSecSuccess
     }
 
     func testGenerateAndReloadCA() throws {
@@ -38,6 +130,109 @@ final class MitmCATests: XCTestCase {
         XCTAssertEqual(attributes[kSecAttrKeySizeInBits] as? Int, 2_048)
     }
 
+    func testCorruptMetadataRecoversByRegeneratingRoot() throws {
+        let service = makeService()
+        let original = try MitmCA(keychainService: service).rootCertificateDER()
+        updateMetadata(service: service, certificateDER: Data([0x01, 0x02, 0x03]))
+
+        let recovered = try MitmCA(keychainService: service).rootCertificateDER()
+
+        XCTAssertNotEqual(recovered, original)
+        XCTAssertTrue(try certificateExists(der: recovered))
+        XCTAssertFalse(try certificateExists(der: original))
+    }
+
+    func testMismatchedMetadataAndPrivateKeyRecoverWithoutDeletingOtherCA() throws {
+        let service = makeService()
+        let otherService = makeService()
+        let original = try MitmCA(keychainService: service).rootCertificateDER()
+        let other = try MitmCA(keychainService: otherService).rootCertificateDER()
+        updateMetadata(service: service, certificateDER: other)
+
+        let recovered = try MitmCA(keychainService: service).rootCertificateDER()
+
+        XCTAssertNotEqual(recovered, original)
+        XCTAssertNotEqual(recovered, other)
+        XCTAssertTrue(try certificateExists(der: recovered))
+        XCTAssertFalse(try certificateExists(der: original))
+        XCTAssertTrue(try certificateExists(der: other))
+        XCTAssertEqual(
+            try MitmCA(keychainService: otherService).rootCertificateDER(),
+            other
+        )
+    }
+
+    func testMismatchedPrivateKeyRecoversAndRemovesOwnedCertificate() throws {
+        let service = makeService()
+        let original = try MitmCA(keychainService: service).rootCertificateDER()
+        deletePrivateKey(service: service)
+        try createReplacementPrivateKey(service: service)
+
+        let recovered = try MitmCA(keychainService: service).rootCertificateDER()
+
+        XCTAssertNotEqual(recovered, original)
+        XCTAssertFalse(try certificateExists(der: original))
+        XCTAssertTrue(try certificateExists(der: recovered))
+    }
+
+    func testKeyOnlyInterruptedStateRegeneratesRoot() throws {
+        let service = makeService()
+        let original = try MitmCA(keychainService: service).rootCertificateDER()
+        deleteMetadata(service: service)
+        try deleteCertificate(der: original)
+
+        let recovered = try MitmCA(keychainService: service).rootCertificateDER()
+
+        XCTAssertNotEqual(recovered, original)
+        XCTAssertTrue(try certificateExists(der: recovered))
+    }
+
+    func testMetadataAndKeyWithoutClassCertificateRestoresCertificateItem() throws {
+        let service = makeService()
+        let original = try MitmCA(keychainService: service).rootCertificateDER()
+        try deleteCertificate(der: original)
+        XCTAssertFalse(try certificateExists(der: original))
+
+        let reloaded = try MitmCA(keychainService: service).rootCertificateDER()
+
+        XCTAssertEqual(reloaded, original)
+        XCTAssertTrue(try certificateExists(der: original))
+    }
+
+    func testMetadataOnlyInterruptedStateRegeneratesRoot() throws {
+        let service = makeService()
+        let original = try MitmCA(keychainService: service).rootCertificateDER()
+        deletePrivateKey(service: service)
+        try deleteCertificate(der: original)
+
+        let recovered = try MitmCA(keychainService: service).rootCertificateDER()
+
+        XCTAssertNotEqual(recovered, original)
+        XCTAssertTrue(try certificateExists(der: recovered))
+    }
+
+    func testDERTimeUsesGeneralizedTimeStartingIn2050() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try XCTUnwrap(TimeZone(secondsFromGMT: 0))
+        let year2049 = try XCTUnwrap(
+            calendar.date(from: DateComponents(year: 2049, month: 12, day: 31))
+        )
+        let year2050 = try XCTUnwrap(
+            calendar.date(from: DateComponents(year: 2050, month: 1, day: 1))
+        )
+
+        let utcTime = MitmCA.derTimeForTesting(year2049)
+        let generalizedTime = MitmCA.derTimeForTesting(year2050)
+
+        XCTAssertEqual(utcTime.first, 0x17)
+        XCTAssertEqual(generalizedTime.first, 0x18)
+        XCTAssertEqual(String(data: utcTime.dropFirst(2), encoding: .ascii), "491231000000Z")
+        XCTAssertEqual(
+            String(data: generalizedTime.dropFirst(2), encoding: .ascii),
+            "20500101000000Z"
+        )
+    }
+
     func testRootKeychainItemsHaveRequiredPersistenceAttributes() throws {
         let service = makeService()
         let rootDER = try MitmCA(keychainService: service).rootCertificateDER()
@@ -55,7 +250,8 @@ final class MitmCATests: XCTestCase {
             kSecMatchLimit: kSecMatchLimitOne
         ] as CFDictionary, &keyResult)
         XCTAssertEqual(keyStatus, errSecSuccess)
-        XCTAssertEqual(CFGetTypeID(try XCTUnwrap(keyResult)), SecKeyGetTypeID())
+        let storedKeyValue = try XCTUnwrap(keyResult)
+        XCTAssertEqual(CFGetTypeID(storedKeyValue), SecKeyGetTypeID())
 
         var metadataResult: CFTypeRef?
         let metadataStatus = SecItemCopyMatching([

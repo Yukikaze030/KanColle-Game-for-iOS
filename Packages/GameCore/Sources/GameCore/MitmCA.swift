@@ -94,13 +94,20 @@ public final class MitmCA: @unchecked Sendable {
             value.data(using: .utf8).map { tagged(0x0C, $0) }
         }
 
-        static func utcTime(_ date: Date) -> Data {
+        static func time(_ date: Date) -> Data {
+            var calendar = Calendar(identifier: .gregorian)
+            calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+            let year = calendar.component(.year, from: date)
             let formatter = DateFormatter()
             formatter.calendar = Calendar(identifier: .gregorian)
             formatter.locale = Locale(identifier: "en_US_POSIX")
             formatter.timeZone = TimeZone(secondsFromGMT: 0)
-            formatter.dateFormat = "yyMMddHHmmss'Z'"
-            return tagged(0x17, Data(formatter.string(from: date).utf8))
+            if (1950...2049).contains(year) {
+                formatter.dateFormat = "yyMMddHHmmss'Z'"
+                return tagged(0x17, Data(formatter.string(from: date).utf8))
+            }
+            formatter.dateFormat = "yyyyMMddHHmmss'Z'"
+            return tagged(0x18, Data(formatter.string(from: date).utf8))
         }
 
         static func objectIdentifier(_ components: [UInt64]) -> Data? {
@@ -242,51 +249,26 @@ public final class MitmCA: @unchecked Sendable {
             + "\n-----END CERTIFICATE-----\n"
     }
 
-    // Internal test support. Each test uses a UUID service and removes both
-    // Keychain items even when an assertion throws.
+    static func derTimeForTesting(_ date: Date) -> Data {
+        DER.time(date)
+    }
+
+    // Internal test support. Production recovery uses the throwing cleanup
+    // path below; teardown is intentionally best-effort so one failed test
+    // cannot mask the original assertion failure.
     static func deleteStoredMaterial(keychainService: String) {
-        let metadataQuery: [CFString: Any] = [
-            kSecClass: kSecClassGenericPassword,
-            kSecAttrService: keychainService,
-            kSecAttrAccount: rootCertificateAccount,
-            kSecReturnData: true,
-            kSecMatchLimit: kSecMatchLimitOne
-        ]
-        var storedCertificateDER: CFTypeRef?
-        if SecItemCopyMatching(
-            metadataQuery as CFDictionary,
-            &storedCertificateDER
-        ) == errSecSuccess,
-           let certificateDER = storedCertificateDER as? Data,
-           let certificate = SecCertificateCreateWithData(
-               nil,
-               certificateDER as CFData
-           ) {
-            let exactCertificateQuery: [CFString: Any] = [
-                kSecClass: kSecClassCertificate,
-                kSecValueRef: certificate
-            ]
-            SecItemDelete(exactCertificateQuery as CFDictionary)
-        }
+        let ca = MitmCA(keychainService: keychainService)
+        ca.lock.lock()
+        defer { ca.lock.unlock() }
+        persistenceLock.lock()
+        defer { persistenceLock.unlock() }
 
-        let keyQuery: [CFString: Any] = [
-            kSecClass: kSecClassKey,
-            kSecAttrKeyClass: kSecAttrKeyClassPrivate,
-            kSecAttrApplicationTag: Data("\(keychainService).ca".utf8)
-        ]
-        SecItemDelete(keyQuery as CFDictionary)
-
-        let certificateQuery: [CFString: Any] = [
-            kSecClass: kSecClassCertificate,
-            kSecAttrLabel: keychainService
-        ]
-        SecItemDelete(certificateQuery as CFDictionary)
-        let metadataDeleteQuery: [CFString: Any] = [
-            kSecClass: kSecClassGenericPassword,
-            kSecAttrService: keychainService,
-            kSecAttrAccount: rootCertificateAccount
-        ]
-        SecItemDelete(metadataDeleteQuery as CFDictionary)
+        let certificateDER = try? ca.copyStoredRootCertificate()
+        let privateKey = try? ca.copyStoredRootPrivateKey()
+        try? ca.removeStoredMaterial(
+            certificateDER: certificateDER,
+            privateKey: privateKey
+        )
     }
 
     // MARK: - Root persistence
@@ -309,7 +291,8 @@ public final class MitmCA: @unchecked Sendable {
         let storedPrivateKey = try copyStoredRootPrivateKey()
         if let certificateDER = storedCertificate,
            let privateKey = storedPrivateKey,
-           try Self.keysMatch(certificateDER: certificateDER, privateKey: privateKey) {
+           Self.keysMatch(certificateDER: certificateDER, privateKey: privateKey) {
+            try ensureRootClassCertificate(certificateDER)
             let material = RootMaterial(
                 certificateDER: certificateDER,
                 privateKey: privateKey
@@ -320,10 +303,18 @@ public final class MitmCA: @unchecked Sendable {
 
         // Recover atomically from a prior interrupted first-run generation.
         if storedCertificate != nil || storedPrivateKey != nil {
-            Self.deleteStoredMaterial(keychainService: service)
+            try removeStoredMaterial(
+                certificateDER: storedCertificate,
+                privateKey: storedPrivateKey
+            )
         }
+        // If both lookups are empty, an old-version certificate-only item
+        // cannot be attributed to this service because macOS may rewrite its
+        // label. Never scan/delete by the shared CN: such an orphan is harmless,
+        // and metadata-first writes below can no longer create this state.
 
         let (publicKey, privateKey) = try generatePersistentRootKeyPair()
+        var newCertificateDER: Data?
         do {
             let certificateDER = try Self.makeCertificate(
                 subjectCommonName: Self.rootCommonName,
@@ -334,7 +325,11 @@ public final class MitmCA: @unchecked Sendable {
                 isCA: true,
                 dnsName: nil
             )
-            try storeRootCertificate(certificateDER)
+            newCertificateDER = certificateDER
+            // Stable metadata is the commit marker. The certificate-class item
+            // is written second and repaired on load if creation was interrupted.
+            try storeRootMetadata(certificateDER)
+            try storeRootClassCertificate(certificateDER)
             let material = RootMaterial(
                 certificateDER: certificateDER,
                 privateKey: privateKey
@@ -342,7 +337,14 @@ public final class MitmCA: @unchecked Sendable {
             cachedRoot = material
             return material
         } catch {
-            Self.deleteStoredMaterial(keychainService: service)
+            do {
+                try removeStoredMaterial(
+                    certificateDER: newCertificateDER,
+                    privateKey: privateKey
+                )
+            } catch let cleanupError {
+                throw cleanupError
+            }
             throw error
         }
     }
@@ -360,8 +362,11 @@ public final class MitmCA: @unchecked Sendable {
         if status == errSecItemNotFound {
             return nil
         }
-        guard status == errSecSuccess, let data = result as? Data else {
+        guard status == errSecSuccess else {
             throw CAError.keychain(status)
+        }
+        guard let data = result as? Data else {
+            throw CAError.keychain(errSecDecode)
         }
         return data
     }
@@ -380,10 +385,16 @@ public final class MitmCA: @unchecked Sendable {
         if status == errSecItemNotFound {
             return nil
         }
-        guard status == errSecSuccess, let key = result else {
+        guard status == errSecSuccess else {
             throw CAError.keychain(status)
         }
-        return (key as! SecKey)
+        guard let key = result else {
+            throw CAError.keychain(errSecDecode)
+        }
+        guard CFGetTypeID(key) == SecKeyGetTypeID() else {
+            throw CAError.keychain(errSecDecode)
+        }
+        return unsafeDowncast(key as AnyObject, to: SecKey.self)
     }
 
     private func generatePersistentRootKeyPair() throws -> (SecKey, SecKey) {
@@ -392,6 +403,7 @@ public final class MitmCA: @unchecked Sendable {
             kSecAttrKeySizeInBits: 2_048,
             kSecPrivateKeyAttrs: [
                 kSecAttrIsPermanent: true,
+                kSecAttrIsExtractable: false,
                 kSecAttrApplicationTag: rootKeyTag,
                 kSecAttrAccessible: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
             ]
@@ -412,7 +424,28 @@ public final class MitmCA: @unchecked Sendable {
         return (publicKey, privateKey)
     }
 
-    private func storeRootCertificate(_ certificateDER: Data) throws {
+    private func storeRootMetadata(_ certificateDER: Data) throws {
+        let query: [CFString: Any] = [
+            kSecClass: kSecClassGenericPassword,
+            kSecAttrService: service,
+            kSecAttrAccount: Self.rootCertificateAccount,
+            kSecAttrAccessible: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
+            kSecValueData: certificateDER
+        ]
+        let status = SecItemAdd(query as CFDictionary, nil)
+        guard status == errSecSuccess else {
+            throw CAError.keychain(status)
+        }
+    }
+
+    private func ensureRootClassCertificate(_ certificateDER: Data) throws {
+        if try rootClassCertificateExists(certificateDER) {
+            return
+        }
+        try storeRootClassCertificate(certificateDER)
+    }
+
+    private func storeRootClassCertificate(_ certificateDER: Data) throws {
         guard let certificate = SecCertificateCreateWithData(
             nil,
             certificateDER as CFData
@@ -426,29 +459,148 @@ public final class MitmCA: @unchecked Sendable {
             kSecValueRef: certificate
         ]
         let status = SecItemAdd(query as CFDictionary, nil)
+        if status == errSecDuplicateItem,
+           try rootClassCertificateExists(certificateDER) {
+            return
+        }
+        guard status == errSecSuccess else {
+            throw CAError.keychain(status)
+        }
+    }
+
+    private func rootClassCertificateExists(_ certificateDER: Data) throws -> Bool {
+        var query = try Self.classCertificateQuery(certificateDER)
+        query[kSecReturnRef] = true
+        query[kSecMatchLimit] = kSecMatchLimitOne
+        var result: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        if status == errSecItemNotFound {
+            return false
+        }
+        guard status == errSecSuccess else {
+            throw CAError.keychain(status)
+        }
+        guard let result, CFGetTypeID(result) == SecCertificateGetTypeID() else {
+            throw CAError.keychain(errSecDecode)
+        }
+        return true
+    }
+
+    private func removeStoredMaterial(
+        certificateDER: Data?,
+        privateKey: SecKey?
+    ) throws {
+        var deletedKeyMatchedCertificate = false
+        if let privateKey,
+           let certificate = try findClassCertificate(matching: privateKey) {
+            try Self.deleteItem([
+                kSecClass: kSecClassCertificate,
+                kSecValueRef: certificate
+            ])
+            deletedKeyMatchedCertificate = true
+        }
+        // If a replacement/corrupt key has no certificate, metadata is the
+        // remaining precise locator. If both locate different certificates,
+        // prefer the key-matched item so corrupt metadata cannot delete another
+        // service's otherwise healthy certificate.
+        if !deletedKeyMatchedCertificate,
+           let certificateDER,
+           SecCertificateCreateWithData(
+               nil,
+               certificateDER as CFData
+           ) != nil {
+            try Self.deleteItem(try Self.classCertificateQuery(certificateDER))
+        }
+
+        try Self.deleteItem([
+            kSecClass: kSecClassKey,
+            kSecAttrKeyClass: kSecAttrKeyClassPrivate,
+            kSecAttrApplicationTag: rootKeyTag
+        ])
+        try Self.deleteItem([
+            kSecClass: kSecClassGenericPassword,
+            kSecAttrService: service,
+            kSecAttrAccount: Self.rootCertificateAccount
+        ])
+    }
+
+    private func findClassCertificate(matching privateKey: SecKey) throws -> SecCertificate? {
+        guard let privatePublicKey = SecKeyCopyPublicKey(privateKey),
+              let expectedKeyDER = SecKeyCopyExternalRepresentation(
+                  privatePublicKey,
+                  nil
+              ) as Data?
+        else {
+            throw CAError.certificateEncoding
+        }
+
+        let query: [CFString: Any] = [
+            kSecClass: kSecClassCertificate,
+            kSecReturnRef: true,
+            kSecMatchLimit: kSecMatchLimitAll
+        ]
+        var result: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        if status == errSecItemNotFound {
+            return nil
+        }
         guard status == errSecSuccess else {
             throw CAError.keychain(status)
         }
 
-        // Certificate labels are not a stable lookup key on every Apple
-        // platform (macOS may derive the label from the subject). Keep the DER
-        // in a service-scoped metadata item as the durable index while also
-        // retaining the certificate-class item above for Security APIs.
-        let metadataQuery: [CFString: Any] = [
-            kSecClass: kSecClassGenericPassword,
-            kSecAttrService: service,
-            kSecAttrAccount: Self.rootCertificateAccount,
-            kSecAttrAccessible: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
-            kSecValueData: certificateDER
+        let values: [CFTypeRef]
+        if let array = result as? [AnyObject] {
+            values = array.map { $0 as CFTypeRef }
+        } else if let result {
+            values = [result]
+        } else {
+            throw CAError.keychain(errSecDecode)
+        }
+        for value in values where CFGetTypeID(value) == SecCertificateGetTypeID() {
+            let certificate = unsafeDowncast(value as AnyObject, to: SecCertificate.self)
+            guard let publicKey = SecCertificateCopyKey(certificate),
+                  let keyDER = SecKeyCopyExternalRepresentation(publicKey, nil) as Data?
+            else {
+                continue
+            }
+            if keyDER == expectedKeyDER {
+                return certificate
+            }
+        }
+        return nil
+    }
+
+    private static func classCertificateQuery(_ certificateDER: Data) throws -> [CFString: Any] {
+        guard let certificate = SecCertificateCreateWithData(
+            nil,
+            certificateDER as CFData
+        ), let issuer = SecCertificateCopyNormalizedIssuerSequence(certificate)
+        else {
+            throw CAError.certificateEncoding
+        }
+        var serialError: Unmanaged<CFError>?
+        guard let serial = SecCertificateCopySerialNumberData(
+            certificate,
+            &serialError
+        ) else {
+            _ = serialError?.takeRetainedValue()
+            throw CAError.certificateEncoding
+        }
+        if let serialError {
+            _ = serialError.takeRetainedValue()
+            throw CAError.certificateEncoding
+        }
+        return [
+            kSecClass: kSecClassCertificate,
+            kSecAttrIssuer: issuer,
+            kSecAttrSerialNumber: serial
         ]
-        let metadataStatus = SecItemAdd(metadataQuery as CFDictionary, nil)
-        guard metadataStatus == errSecSuccess else {
-            let exactCertificateQuery: [CFString: Any] = [
-                kSecClass: kSecClassCertificate,
-                kSecValueRef: certificate
-            ]
-            SecItemDelete(exactCertificateQuery as CFDictionary)
-            throw CAError.keychain(metadataStatus)
+    }
+
+    private static func deleteItem(_ query: [CFString: Any]) throws {
+        let status = SecItemDelete(query as CFDictionary)
+        guard status == errSecSuccess || status == errSecItemNotFound else {
+            throw CAError.keychain(status)
         }
     }
 
@@ -499,8 +651,8 @@ public final class MitmCA: @unchecked Sendable {
             TimeInterval(validityDays) * 24 * 60 * 60
         )
         let validity = DER.sequence(
-            DER.utcTime(notBefore),
-            DER.utcTime(notAfter)
+            DER.time(notBefore),
+            DER.time(notAfter)
         )
         let extensions = try certificateExtensions(
             publicKeyDER: publicKeyDER,
@@ -644,7 +796,7 @@ public final class MitmCA: @unchecked Sendable {
     private static func keysMatch(
         certificateDER: Data,
         privateKey: SecKey
-    ) throws -> Bool {
+    ) -> Bool {
         guard let certificate = SecCertificateCreateWithData(
             nil,
             certificateDER as CFData
@@ -658,7 +810,7 @@ public final class MitmCA: @unchecked Sendable {
             privatePublicKey,
             nil
         ) as Data? else {
-            throw CAError.certificateEncoding
+            return false
         }
         return certificateKeyDER == privateKeyDER
     }
