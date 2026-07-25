@@ -1024,17 +1024,17 @@ public final class MitmCA {
 
   **结论（拍板，写死进任务）：** 在收到命中 MITM 的 CONNECT 后，**同一 NWConnection 无法升 TLS 是 Network 框架限制；因此代理对 MITM 域名不走 CONNECT 语义**——改为：LocalProxyServer 对 `isMitmHost` 的 CONNECT 请求**直接回复 `HTTP/1.1 405`？** 不行。
 
-  **真正的标准做法（iOS 上 Surge/Quantumult/Thor 等本地 MITM 工具通用）：代理收到 CONNECT 回 200 后，用 socket 文件描述符做 TLS。** Network 框架拿不到 fd。**因此 LocalProxyServer 的 MITM 通道整体改用 BSD socket 实现**：`socket()/bind()/listen()/accept()`（Darwin 原生，属 Apple 平台 API），TLS 握手用 `nw_protocol` 不可用 → **用 `SSLContext`（SecureTransport）**：macOS 14 起 SecureTransport 已从 SDK 移除，但 **iOS 上仍然存在（deprecated 但可用，iOS 17 SDK 仍提供 ssl.h）**——验证：grep iPhoneOS.sdk 的 SecureTransport headers。若存在：`SSLNewContext(false)`（服务端）+ `SSLSetCertificate`（identity）+ `SSLSetConnection`/`SSLRead`/`SSLWrite` + accept fd 的读写回调。这是 iOS 上唯一不依赖第三方的服务端 TLS 引擎。
+  **真正的标准做法（iOS 上 Surge/Quantumult/Thor 等本地 MITM 工具通用）：代理收到 CONNECT 回 200 后，用 socket 文件描述符做 TLS。** Network 框架拿不到 fd。**因此 LocalProxyServer 的 MITM 通道整体改用 BSD socket 实现**：`socket()/bind()/listen()/accept()`（Darwin 原生，属 Apple 平台 API），TLS 握手用 `nw_protocol` 不可用 → **用 `SSLContext`（SecureTransport）**：macOS 14 起 SecureTransport 已从 SDK 移除，但 **iOS 上仍然存在（deprecated 但可用，iOS 17 SDK 仍提供 ssl.h）**——验证：grep iPhoneOS.sdk 的 SecureTransport headers。若存在：`SSLCreateContext(nil, .serverSide, .streamType)`（服务端；`SSLNewContext` 仅 macOS 可用，iOS 不导出）+ `SSLSetCertificate`（identity）+ `SSLSetConnection`/`SSLRead`/`SSLWrite` + accept fd 的读写回调。这是 iOS 上唯一不依赖第三方的服务端 TLS 引擎。
 
   **执行步骤（定稿）：**
-  1. 先验证 SecureTransport 在 iPhoneOS SDK 可用：`ls /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS.sdk/System/Library/Frameworks/Security.framework/Headers/ | grep -i ssl`（预期有 SecureTransport.h）。**同时确认 swift 可用性**：SecureTransport 是 C API，Swift 可 import Security 后直接调用 `SSLNewContext` 等（deprecated 警告可接受，加 `@available(iOS, deprecated: 13.0)` 抑制或 `#warning` 注释说明"个人侧载项目，SecureTransport 服务端 TLS 为唯一原生选项"）。
+  1. 先验证 SecureTransport 在 iPhoneOS SDK 可用：`ls /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS.sdk/System/Library/Frameworks/Security.framework/Headers/ | grep -i ssl`（预期有 SecureTransport.h）。**同时确认 swift 可用性**：SecureTransport 是 C API，Swift 可 import Security 后直接调用 `SSLCreateContext`、`SSLSetIOFuncs` 等（deprecated 警告可接受，加 `@available(iOS, deprecated: 13.0)` 抑制或 `#warning` 注释说明"个人侧载项目，SecureTransport 服务端 TLS 为唯一原生选项"）。
   2. 新建 `Packages/GameCore/Sources/GameCore/MitmFrontend.swift`：BSD socket loopback 监听 → accept → `SSLNewContext(false)` 服务端上下文（`SSLSetCertificate` 传站点证书 identity 链）→ `SSLHandshake` → 此后 `SSLRead` 得到明文 HTTP 请求 → 交给与代理相同的 `onGameResourceRequest`/回源逻辑（回源用 `NWConnection(host:443, using: .tls)` 或同样 SecureTransport 客户端）→ `SSLWrite` 回响应。
   3. LocalProxyServer 的 `.connect(host, 443)` 命中 MITM 时：回复 200，然后把该 client 连接**桥接到 MitmFrontend**——不行，fd 同样拿不到。
 
   **★★ 最终定稿（简单、不再绕）：** proxyConfigurations 的 CONNECT 全部终结在 LocalProxyServer 的 NWConnection 里，fd 不可得 ⇒ **MITM 域名不经过 CONNECT**：LocalProxyServer 对 MITM 域名回复 `HTTP/1.1 200` 后，客户端开始在该连接上发 TLS ClientHello——此时**该 NWConnection 直接按「每连接一个 MitmSession」处理**：把 NWConnection 当纯字节泵，收到的字节喂给一个 **SecureTransport 服务端上下文（内存 BIO 模式）**：`SSLSetIOFuncs` 自定义读写回调——回调从 NWConnection receive 读、向 NWConnection send 写。**这是可行且干净的**（SecureTransport 支持自定义 IO，不碰 fd）：TLS 记录在 NWConnection 上透传，SSLRead/SSLWrite 产出/消费明文 HTTP。
 
   **照此实现 MitmSession.swift：**
-  - `SSLNewContext(false)`（kSSLServerSide）→ `SSLSetIOFuncs(read, write)`（read 回调：从内部缓冲（NWConnection receive 喂入）拷贝；写回调：累积后 NWConnection.send）
+  - `SSLCreateContext(nil, .serverSide, .streamType)`（kSSLServerSide）→ `SSLSetIOFuncs(read, write)`（read 回调：从内部缓冲（NWConnection receive 喂入）拷贝；写回调：累积后 NWConnection.send）
   - `SSLSetCertificate(context, [identity, caCert] as CFArray)`
   - 驱动循环：NWConnection receive → 数据入队 → `SSLHandshake` 直到成功 → `SSLRead` 循环读明文请求头 → ProxyHTTPParser 解析 → onGameResourceRequest 或回源（上游 NWConnection TLS）→ `SSLWrite` 回传
   - 自定义 IO 回调是同步语义，NWConnection receive 是异步——用 `DispatchSemaphore` + 队列缓冲桥接（这是本任务最难的点，仔细做）
