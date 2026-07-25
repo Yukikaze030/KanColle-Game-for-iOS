@@ -1,13 +1,13 @@
 import Foundation
 
-public struct AdmiralSnapshot: Sendable, Equatable {
+public struct AdmiralSnapshot: Codable, Sendable, Equatable {
     public let memberID: Int?
     public let nickname: String
     public let level: Int?
     public let experience: Int?
 }
 
-public struct UserShip: Sendable, Equatable {
+public struct UserShip: Codable, Sendable, Equatable {
     public let id: Int
     public let masterShipID: Int
     public let level: Int
@@ -55,7 +55,7 @@ public struct UserShip: Sendable, Equatable {
     }
 }
 
-public struct UserSlotItem: Sendable, Equatable {
+public struct UserSlotItem: Codable, Sendable, Equatable {
     public let id: Int
     public let masterSlotItemID: Int
     public let improvementLevel: Int
@@ -63,7 +63,7 @@ public struct UserSlotItem: Sendable, Equatable {
     public let locked: Bool
 }
 
-public struct ExpeditionState: Sendable, Equatable {
+public struct ExpeditionState: Codable, Sendable, Equatable {
     public let status: Int
     public let missionID: Int
     public let completionTime: Int64?
@@ -71,14 +71,14 @@ public struct ExpeditionState: Sendable, Equatable {
     public var isActive: Bool { status > 0 && missionID > 0 }
 }
 
-public struct FleetDeck: Sendable, Equatable {
+public struct FleetDeck: Codable, Sendable, Equatable {
     public let id: Int
     public let name: String
     public let shipIDs: [Int]
     public let expedition: ExpeditionState?
 }
 
-public struct RepairDock: Sendable, Equatable {
+public struct RepairDock: Codable, Sendable, Equatable {
     public let id: Int
     public let state: Int
     public let shipID: Int?
@@ -87,7 +87,7 @@ public struct RepairDock: Sendable, Equatable {
     public var isOccupied: Bool { state > 0 && (shipID ?? 0) > 0 }
 }
 
-public struct FleetSnapshot: Sendable, Equatable {
+public struct FleetSnapshot: Codable, Sendable, Equatable {
     public internal(set) var admiral: AdmiralSnapshot?
     public internal(set) var ships: [Int: UserShip]
     public internal(set) var slotItems: [Int: UserSlotItem]

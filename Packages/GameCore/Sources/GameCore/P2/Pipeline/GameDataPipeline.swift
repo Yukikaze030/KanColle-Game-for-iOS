@@ -1,6 +1,6 @@
 import Foundation
 
-public struct GameDataState: Sendable, Equatable {
+public struct GameDataState: Codable, Sendable, Equatable {
     public let master: GameMasterData
     public let fleet: FleetSnapshot
     public let revision: Int64
@@ -117,6 +117,16 @@ public actor GameDataPipeline {
         masterData = GameMasterData()
         fleetState = FleetSnapshot()
         revision = 0
+        recentEventIDs.removeAll(keepingCapacity: true)
+        recentEventIDSet.removeAll(keepingCapacity: true)
+    }
+
+    /// Restores the last atomically persisted baseline before new WebKit events
+    /// arrive. Event de-duplication intentionally starts fresh for each process.
+    public func restore(_ state: GameDataState) {
+        masterData = state.master
+        fleetState = state.fleet
+        revision = max(0, state.revision)
         recentEventIDs.removeAll(keepingCapacity: true)
         recentEventIDSet.removeAll(keepingCapacity: true)
     }

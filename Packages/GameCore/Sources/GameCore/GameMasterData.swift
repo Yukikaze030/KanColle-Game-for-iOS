@@ -1,6 +1,6 @@
 import Foundation
 
-public struct MasterShip: Sendable, Equatable {
+public struct MasterShip: Codable, Sendable, Equatable {
     public let id: Int
     public let name: String
     public let shipTypeID: Int
@@ -9,7 +9,7 @@ public struct MasterShip: Sendable, Equatable {
     public let slotCount: Int?
 }
 
-public struct MasterSlotItem: Sendable, Equatable {
+public struct MasterSlotItem: Codable, Sendable, Equatable {
     public let id: Int
     public let name: String
     public let type: [Int]
@@ -18,19 +18,19 @@ public struct MasterSlotItem: Sendable, Equatable {
     public var category: Int? { type.count > 2 ? type[2] : nil }
 }
 
-public struct MasterShipType: Sendable, Equatable {
+public struct MasterShipType: Codable, Sendable, Equatable {
     public let id: Int
     public let name: String
     public let equipmentTypes: [Int: Int]
 }
 
-public struct MasterMapArea: Sendable, Equatable {
+public struct MasterMapArea: Codable, Sendable, Equatable {
     public let id: Int
     public let name: String
     public let type: Int?
 }
 
-public struct MasterMap: Sendable, Equatable {
+public struct MasterMap: Codable, Sendable, Equatable {
     public let id: Int
     public let mapAreaID: Int
     public let number: Int
@@ -39,7 +39,7 @@ public struct MasterMap: Sendable, Equatable {
 
 /// The subset of api_start2 master data required by the initial fleet pipeline.
 /// Applying a new start2 payload replaces each collection present in that payload.
-public struct GameMasterData: Sendable, Equatable {
+public struct GameMasterData: Codable, Sendable, Equatable {
     public private(set) var ships: [Int: MasterShip] = [:]
     public private(set) var slotItems: [Int: MasterSlotItem] = [:]
     public private(set) var shipTypes: [Int: MasterShipType] = [:]

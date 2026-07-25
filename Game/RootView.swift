@@ -17,15 +17,21 @@ struct RootView: View {
     @State private var showsCertificateInstall = false
     @State private var screenshotSaveInFlight = false
     @State private var lastScreenshotSaveAt: Date?
+    @State private var gameStateModel: GameStateModel
+    @State private var dataSession: UInt64 = 0
     @StateObject private var subtitleCoordinator: SubtitleCoordinator
 
     private let settings: SettingsStore
     private let loginAutomation = LoginAutomation()
     private let screenshotSaver = ScreenshotSaver()
+    private let dataCoordinator: GameDataCoordinator
 
     init() {
         let settings = SettingsStore()
+        let gameStateModel = GameStateModel()
         self.settings = settings
+        self.dataCoordinator = GameDataCoordinator(model: gameStateModel)
+        _gameStateModel = State(initialValue: gameStateModel)
         _subtitleCoordinator = StateObject(
             wrappedValue: SubtitleCoordinator(settings: settings)
         )
@@ -72,7 +78,7 @@ struct RootView: View {
                 }
             }
         }
-        .sheet(item: $presentedDestination) { destination in
+        .fullScreenCover(item: $presentedDestination) { destination in
             destinationSheet(destination)
         }
         .sheet(isPresented: $showsCertificateInstall) {
@@ -100,22 +106,30 @@ struct RootView: View {
 
     @ViewBuilder
     private func destinationSheet(_ destination: GameMenuDestination) -> some View {
-        NavigationStack {
-            Group {
-                if destination == .settings {
+        if destination == .fleet {
+            FleetOverlayView(
+                gameState: gameStateModel.state,
+                timers: gameStateModel.timers,
+                onClose: { presentedDestination = nil }
+            )
+        } else {
+            NavigationStack {
+                Group {
+                    if destination == .settings {
                     SettingsView(settings: settings)
-                } else {
-                    ContentUnavailableView(
-                        destination.rawValue,
-                        systemImage: destination.symbol,
-                        description: Text("该模块将在后续里程碑接入完整数据功能。")
-                    )
+                    } else {
+                        ContentUnavailableView(
+                            destination.rawValue,
+                            systemImage: destination.symbol,
+                            description: Text("该模块将在后续里程碑接入完整数据功能。")
+                        )
+                    }
                 }
-            }
-            .navigationTitle(destination.rawValue)
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("完成") { presentedDestination = nil }
+                .navigationTitle(destination.rawValue)
+                .toolbar {
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("完成") { presentedDestination = nil }
+                    }
                 }
             }
         }
@@ -133,6 +147,7 @@ struct RootView: View {
         phase = .starting
 
         Task {
+            dataSession = await dataCoordinator.startSession()
             await configureMITMForThisLaunch()
             configureProxyHandlers(settings: settings)
             configureBridge()
@@ -179,6 +194,8 @@ struct RootView: View {
     }
 
     private func exitGame() {
+        dataSession = 0
+        Task { await dataCoordinator.stopSession() }
         proxy.stop()
         proxy.onRequest = nil
         proxy.onGameResourceRequest = nil
@@ -257,12 +274,22 @@ struct RootView: View {
                         alertMessage = error.localizedDescription
                     }
                 }
-            case .kcsapi(let endpoint, _, let response):
+            case .kcsapi(let endpoint, let request, let response):
                 DiagnosticsStore.shared.recordProxyLog("[API] \(endpoint)")
                 subtitleCoordinator.receiveAPIResponse(
                     endpoint: endpoint,
                     response: response
                 )
+                let session = dataSession
+                guard session != 0 else { return }
+                Task {
+                    await dataCoordinator.ingest(
+                        endpoint: endpoint,
+                        request: request,
+                        response: response,
+                        session: session
+                    )
+                }
             case .apiError(let code):
                 DiagnosticsStore.shared.recordProxyLog("[APIERR] code=\(code)")
             case .log(let message):
