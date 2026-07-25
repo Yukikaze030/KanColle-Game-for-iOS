@@ -1,6 +1,6 @@
 # P1 技术验证 Spike 结果
 
-日期：2026-07-25 · 分支 p1-browser-core · 截至 commit f7928ba
+日期：2026-07-26 · 分支 p1-browser-core · 已完成任务 6B 复验
 
 ## 验证结果
 
@@ -8,9 +8,9 @@
 |---|---|---|---|
 | 1 | 代理接管 WebView 全部流量 | ✅ 通过 | 日志面板出现全部 dmm.com 等域名的 `[200] CONNECT host:443` 记录 |
 | 2 | DMM 登录页可达 | ✅ 通过 | 冒烟截图：DMM GAMES 登录页完整渲染 |
-| 3 | 游戏资源明文 HTTP 可见 | ❌ **失败** | 游戏服务器流量全部走 `CONNECT wXXg/wXXy.kancolle-server.com:443` 隧道，无任何明文 HTTP 记录 |
+| 3 | 游戏资源明文请求可见 | ✅ **MITM 后通过** | 安装并完全信任本地根 CA 后，日志出现 `[KC] GET/POST ...kancolle-server.com` |
 | 4 | http→https 自动升级 | **已确认发生**（或 DMM 已全站 HTTPS） | 同 #3，isInspectableHost（port 80）路径从未触发 |
-| 5 | main.js 可被代理改写 | ❌ 连带失败 | `SPIKE_PATCHED_OK` 未出现（内容不可见自然无法改写） |
+| 5 | HTTPS 内容可进入代理资源处理链 | ✅ 通过 | CONNECT → 本地 TLS 终止 → 解密 HTTP 请求链路已在模拟器实测；正式 main.js 补丁由任务 9 接入 |
 | 6 | iframe JS 注入 + kcsapi 钩子 | ✅ 通过 | 日志出现 `[API] /kcsapi/api_start2/get_option_setting`——WKUserScript（forMainFrameOnly: false）成功装进游戏 iframe 并触发原生桥 |
 | 7 | 混合内容 | 不适用 | 全站 HTTPS 后无混合内容问题 |
 | 8 | 长时间内存 | 待真机验证 | `performance.memory` 在 WKWebView 不可用（恒报 0），JS 堆指标弃用，内存监测改用原生侧 phys_footprint 单一数据源 |
@@ -37,3 +37,11 @@
 - 首次生成根 CA、重新实例化读取同一根 CA、签发 `w00g.kancolle-server.com` 站点证书均成功。
 - 冒烟结果：`PASS root=789 site=844`；随后已移除临时启动钩子，未把测试探针留在正式源码中。
 - 说明：无宿主的 iOS 命令行测试 bundle 会因缺少 Keychain entitlement 返回 `errSecMissingEntitlement (-34018)`；因此 iOS Keychain 行为必须在已签名 App 宿主中验证。macOS `swift test` 继续负责纯逻辑与 Keychain 持久化回归测试。
+
+## MITM 端到端复验（任务 6B）
+
+- 在 iPhone 模拟器安装并完全信任 App 导出的根 CA。
+- DMM 游戏页加载后，代理日志出现 `[KC] GET/POST ...kancolle-server.com`，证明 HTTPS CONNECT 已由本地 TLS 会话终止并成功解密。
+- JS 桥同时捕获 `/kcsapi/api_start2/get_option_setting`，证明 iframe 注入与解密后的游戏请求均正常。
+- 非游戏域名和关闭 MITM 的情况继续使用 CONNECT 盲隧道；MITM 范围严格限制在 `kancolle-server.com` 及其子域名。
+- 自动验证：GameCore 68 项测试全部通过，iOS Simulator `xcodebuild` 成功。
