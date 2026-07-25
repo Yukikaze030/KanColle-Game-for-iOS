@@ -1,0 +1,37 @@
+{
+  "api_data": {
+    "api_count": 3,
+    "api_page_count": 1,
+    "api_disp_page": 1,
+    "api_list": [
+      -1,
+      {
+        "api_no": 201,
+        "api_category": 2,
+        "api_type": 1,
+        "api_state": 2,
+        "api_progress_flag": 1,
+        "api_title": "server title 201",
+        "api_detail": "server detail 201"
+      },
+      {
+        "api_no": 411,
+        "api_category": 4,
+        "api_type": 2,
+        "api_state": 1,
+        "api_progress_flag": 0,
+        "api_title": "server title 411",
+        "api_detail": "server detail 411"
+      },
+      {
+        "api_no": 9999,
+        "api_category": 9,
+        "api_type": 9,
+        "api_state": 2,
+        "api_progress_flag": 2,
+        "api_title": "unknown server quest",
+        "api_detail": "server-only detail"
+      }
+    ]
+  }
+}
