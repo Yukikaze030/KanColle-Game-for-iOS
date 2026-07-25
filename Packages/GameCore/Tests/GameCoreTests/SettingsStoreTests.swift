@@ -25,6 +25,10 @@ final class SettingsStoreTests: XCTestCase {
         XCTAssertFalse(s.heavyDamageLockedOnly)
         XCTAssertEqual(s.heavyDamageMinimumLevel, 0)
         XCTAssertEqual(s.notificationLeadTimeSeconds, 61)
+        XCTAssertTrue(s.expeditionNotificationsEnabled)
+        XCTAssertTrue(s.dockingNotificationsEnabled)
+        XCTAssertTrue(s.moraleNotificationsEnabled)
+        XCTAssertTrue(s.akashiNotificationsEnabled)
         XCTAssertEqual(s.alterGadgetEndpoint, BrowserConstants.defaultAlterGadgetURL)
     }
     func testP2SafetySettingsClampUnsafeValues() {

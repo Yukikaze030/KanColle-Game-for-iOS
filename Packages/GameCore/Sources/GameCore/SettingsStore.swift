@@ -118,6 +118,26 @@ public struct SettingsStore {
         set { defaults.set(min(600, max(0, newValue)), forKey: "pref_notification_lead_seconds") }
     }
 
+    public var expeditionNotificationsEnabled: Bool {
+        get { defaults.object(forKey: "pref_notify_expedition") as? Bool ?? true }
+        set { defaults.set(newValue, forKey: "pref_notify_expedition") }
+    }
+
+    public var dockingNotificationsEnabled: Bool {
+        get { defaults.object(forKey: "pref_notify_docking") as? Bool ?? true }
+        set { defaults.set(newValue, forKey: "pref_notify_docking") }
+    }
+
+    public var moraleNotificationsEnabled: Bool {
+        get { defaults.object(forKey: "pref_notify_morale") as? Bool ?? true }
+        set { defaults.set(newValue, forKey: "pref_notify_morale") }
+    }
+
+    public var akashiNotificationsEnabled: Bool {
+        get { defaults.object(forKey: "pref_notify_akashi") as? Bool ?? true }
+        set { defaults.set(newValue, forKey: "pref_notify_akashi") }
+    }
+
     /// Setting `nil` removes the key (UserDefaults.removeObject semantics).
     public var latestURL: String? {
         get { defaults.string(forKey: "pref_latest_url") }

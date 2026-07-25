@@ -79,6 +79,7 @@ struct SettingsView: View {
             cacheSection
             networkSection
             certificateSection
+            NotificationSettingsSection(settings: settings)
             memorySection
             diagnosticsSection
             privacySection
