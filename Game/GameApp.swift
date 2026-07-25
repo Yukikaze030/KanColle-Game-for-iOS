@@ -6,9 +6,14 @@
 //
 
 import SwiftUI
+import GameCore
 
 @main
 struct GameApp: App {
+    init() {
+        _ = Placeholder.ready
+    }
+
     var body: some Scene {
         WindowGroup {
             ContentView()
