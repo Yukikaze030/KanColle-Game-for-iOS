@@ -1,0 +1,32 @@
+# P1 技术验证 Spike 结果
+
+日期：2026-07-25 · 分支 p1-browser-core · 截至 commit f7928ba
+
+## 验证结果
+
+| # | 验证项 | 结果 | 证据 |
+|---|---|---|---|
+| 1 | 代理接管 WebView 全部流量 | ✅ 通过 | 日志面板出现全部 dmm.com 等域名的 `[200] CONNECT host:443` 记录 |
+| 2 | DMM 登录页可达 | ✅ 通过 | 冒烟截图：DMM GAMES 登录页完整渲染 |
+| 3 | 游戏资源明文 HTTP 可见 | ❌ **失败** | 游戏服务器流量全部走 `CONNECT wXXg/wXXy.kancolle-server.com:443` 隧道，无任何明文 HTTP 记录 |
+| 4 | http→https 自动升级 | **已确认发生**（或 DMM 已全站 HTTPS） | 同 #3，isInspectableHost（port 80）路径从未触发 |
+| 5 | main.js 可被代理改写 | ❌ 连带失败 | `SPIKE_PATCHED_OK` 未出现（内容不可见自然无法改写） |
+| 6 | iframe JS 注入 + kcsapi 钩子 | ✅ 通过 | 日志出现 `[API] /kcsapi/api_start2/get_option_setting`——WKUserScript（forMainFrameOnly: false）成功装进游戏 iframe 并触发原生桥 |
+| 7 | 混合内容 | 不适用 | 全站 HTTPS 后无混合内容问题 |
+| 8 | 长时间内存 | 待真机验证 | `performance.memory` 在 WKWebView 不可用（恒报 0），JS 堆指标弃用，内存监测改用原生侧 phys_footprint 单一数据源 |
+
+## 架构决策（用户已拍板）
+
+**采用方案 A：CA 证书 + MITM（完整能力）。**
+
+- App 首次启动生成设备本地根 CA（Security 框架生成密钥对 + 手工 DER 编码自签证书，存 Keychain）
+- 引导用户安装并「完全信任」该 CA（导出 .cer → 系统设置安装描述文件 → 启用完全信任；侧载场景无审核顾虑）
+- 本地代理对 `*.kancolle-server.com:443`（及其他需要内容可见的游戏域名）执行 MITM：CONNECT 后向 WKWebView 出示现场签发的站点证书（CA 签名），终止 TLS；上游另起真实 TLS 连接。此后游戏流量对代理完全明文可见
+- 资源缓存（任务 8）、main.js 补丁（任务 9）在解密后的明文通道上实施，与原计划一致
+- 其余域名（DMM/osapi/广告阻断等）维持 CONNECT 盲隧道，不解密——把 MITM 面缩到最小
+
+## 对计划的变更
+
+- 新增任务 6A（MitmCA：CA 生成/站点证书签发/Keychain）与任务 6B（证书安装引导 + 代理 TLS 终止集成 + MITM 复验），插入任务 6 与任务 7 之间
+- 任务 8/9 前提从「明文 HTTP」改为「MITM 解密后的明文」
+- 内存监测弃用 JS 堆指标（performance.memory 不可用），仅用原生 phys_footprint（任务 14 相应简化）

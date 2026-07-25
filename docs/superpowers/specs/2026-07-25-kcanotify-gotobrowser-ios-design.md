@@ -46,8 +46,8 @@ iPad 额外能力：工具面板可与游戏画面并排（Split 布局），但
 ┌──────────────┴──────────────────────────────▼───────────────┐
 │ BrowserEngine                                               │
 │  WebViewManager（WKWebView 配置/UA/Cookie/JS 注入/白屏恢复）  │
-│  LocalProxy（SwiftNIO 本地代理，域名级路由）                  │
-│  ResourceInterceptor（WKURLSchemeHandler，内容级缓存/补丁）   │
+│  LocalProxy（Network 框架本地代理，CONNECT 隧道 + MITM 终止） │
+│  ResourceInterceptor（代理内容层，缓存/补丁/替换）             │
 │  ScriptPatcher（main.js 补丁：静音/截图/触摸/FPS/暴击/翻译）  │
 └──────────────┬──────────────────────────────────────────────┘
    kcsapi 响应（axios 拦截 → WKScriptMessageHandler）
@@ -69,7 +69,7 @@ iPad 额外能力：工具面板可与游戏画面并排（Split 布局），但
 
 | Android | iOS |
 |---|---|
-| `WebViewClient.shouldInterceptRequest` | LocalProxy（域名级）+ WKURLSchemeHandler（内容级） |
+| `WebViewClient.shouldInterceptRequest` | LocalProxy（CONNECT 隧道 + MITM 解密后的内容层） |
 | `JavascriptInterface` / axios 拦截 | `WKScriptMessageHandler` → DataPipeline |
 | `KcaVpnService`（VPN 抓包） | 不需要（应用内捕获） |
 | 悬浮窗 Service ×14 | SwiftUI 覆盖层页面（悬浮球唤起） |
@@ -79,15 +79,19 @@ iPad 额外能力：工具面板可与游戏画面并排（Split 布局），但
 
 ## 5. BrowserEngine 详细设计
 
-### 5.1 混合拦截分工
+### 5.1 拦截架构（2026-07-25 按 Spike 结果修订）
+
+Spike 证实 iOS 上舰 C 游戏资源全走 HTTPS（原"明文 HTTP"假设不成立，详见 `docs/superpowers/spike-results.md`）。采用 **CA 证书 + MITM** 方案：
 
 | 层级 | 机制 | 职责 |
 |---|---|---|
-| 域名级 | LocalProxy（SwiftNIO，localhost，经 `proxyConfigurations` 挂载） | 广告/追踪域名阻断、gadget 绕行（URL 替换方式）、请求日志 |
-| 内容级 | `WKURLSchemeHandler`（自定义 scheme `kc-cache://`） | 资源缓存命中返回本地文件、assets 替换（字体/维护页等）、返回打过补丁的 main.js |
-| 页面级 | `WKUserScript` 注入 | 资源 URL 改写为 `kc-cache://`、axios 拦截 kcsapi、静音/截图/触摸补丁、字幕钩子 |
+| 域名级 | LocalProxy（Network 框架，localhost，经 `proxyConfigurations` 挂载） | 广告/追踪域名阻断、非游戏域名 CONNECT 盲隧道转发 |
+| 内容级 | **MITM 解密**：App 生成设备本地根 CA（用户安装并完全信任），代理对 `*.kancolle-server.com` 现场签发站点证书、终止 TLS，游戏流量解密为明文 | 资源缓存命中返回本地文件、assets 替换（字体/维护页等）、main.js 补丁后内容、gadget 绕行 |
+| 页面级 | `WKUserScript` 注入（iframe 可注入已验证） | kcsapi 拦截、静音/截图/触摸运行时钩子、字幕钩子 |
 
-HTTPS 下本地代理看不到内容（只能看到 CONNECT 目标），因此内容级操作全部走 scheme 改写路径——与 GotoBrowser 的「URL 替换式 gadget 绕行」同构，代码逻辑可移植。`patchMainScript` 的补丁（静音、FPS 解锁、暴击显示、KCCP 翻译、触摸事件表替换）是纯字符串/正则处理，直接移植，在 scheme handler 返回 main.js 前依次应用，沿用原项目「匹配不到就放弃」的容错策略。
+- CA 私钥不出设备，存 Keychain；MITM 面最小化：仅游戏资源域名解密，DMM/osapi 等一律盲隧道
+- 证书安装引导：App 内导出 .cer → 用户于系统设置安装描述文件并启用完全信任（个人侧载无审核顾虑）
+- `patchMainScript` 的补丁（静音、FPS 解锁、暴击显示、KCCP 翻译、触摸事件表替换）在解密后的 main.js 上应用，沿用原项目「匹配不到就放弃」的容错策略
 
 ### 5.2 登录与地区绕行
 
@@ -101,7 +105,7 @@ HTTPS 下本地代理看不到内容（只能看到 CONNECT 目标），因此�
 
 - **降压力**：默认 Canvas 渲染器模式（UA 伪装，设置中可切回 WebGL）；资源本地缓存减少网络进程负担；`didReceiveMemoryWarning` 时释放内存缓存（磁盘缓存保留）；全 App 仅一个 WKWebView 实例
 - **优雅恢复**：`webViewWebContentProcessDidTerminate` → 自动 reload 并 toast 提示；JS 监听 `webglcontextlost/restored`，能局部恢复则不整页刷新；终止次数计入诊断
-- **内存监测（新增）**：定时采样 App 驻留内存（`task_vm_info`）+ 页面 JS 堆（`performance.memory`，注入脚本周期上报）；超过阈值弹窗警告——默认阈值：App 驻留内存 > 设备物理内存的 40%，或页面 JS 堆 > 400MB（两者均在设置页可调）；提供「清理缓存 / 重新加载 / 忽略」三个选项；采样历史写入设置页诊断信息
+- **内存监测（新增）**：定时采样 App 驻留内存（`task_vm_info` phys_footprint；Spike 证实 `performance.memory` 在 WKWebView 不可用，JS 堆指标弃用）；超过阈值弹窗警告——默认阈值：App 驻留内存 > 设备物理内存的 40%（设置页可调）；提供「清理缓存 / 重新加载 / 忽略」三个选项；采样历史写入设置页诊断信息
 
 ### 5.4 截图 / 字幕 / 音量
 

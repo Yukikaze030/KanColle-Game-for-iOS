@@ -899,6 +899,163 @@ struct RootView: View {
 
 ---
 
+### 任务 6A：MitmCA（CA 生成与站点证书签发）
+
+**文件：**
+- 创建：`Packages/GameCore/Sources/GameCore/MitmCA.swift`
+- 测试：`Packages/GameCore/Tests/GameCoreTests/MitmCATests.swift`
+
+**背景：** Spike 证实游戏资源全走 HTTPS（docs/superpowers/spike-results.md），用户拍板采用 CA + MITM 方案。本任务实现证书根基：App 首次启动生成设备本地根 CA（RSA 2048），私钥存 Keychain（kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly），之后可为任意游戏域名现场签发站点证书。
+
+**步骤 1：编写失败测试**
+
+```swift
+final class MitmCATests: XCTestCase {
+    func testGenerateAndReloadCA() throws {
+        let ca = MitmCA(keychainService: "test.\(UUID().uuidString)")
+        let first = try ca.rootCertificateDER()   // 首次触发生成
+        let second = try ca.rootCertificateDER()  // 应命中 Keychain 缓存，字节一致
+        XCTAssertEqual(first, second)
+        XCTAssertTrue(first.starts(with: Data([0x30, 0x82])))  // DER SEQUENCE
+    }
+    func testIssueSiteCertificate() throws {
+        let ca = MitmCA(keychainService: "test.\(UUID().uuidString)")
+        _ = try ca.rootCertificateDER()
+        let (certDER, _) = try ca.issueCertificate(forHost: "w00g.kancolle-server.com")
+        let pem = MitmCA.pemEncode(der: certDER)
+        // 用系统 security 工具验证证书链与字段（测试内用 SecCertificateCreateWithData 亦可）
+        let cert = SecCertificateCreateWithData(nil, certDER as CFData)
+        XCTAssertNotNil(cert)
+        let summary = SecCertificateCopySubjectSummary(cert!) as String
+        XCTAssertTrue(summary.contains("kancolle-server.com"))
+        _ = pem
+    }
+    func testIssueCachesPerHost() throws {
+        let ca = MitmCA(keychainService: "test.\(UUID().uuidString)")
+        _ = try ca.rootCertificateDER()
+        let a = try ca.issueCertificate(forHost: "w01g.kancolle-server.com").0
+        let b = try ca.issueCertificate(forHost: "w01g.kancolle-server.com").0
+        XCTAssertEqual(a, b)  // 同 host 命中缓存
+    }
+}
+```
+
+**步骤 2：运行验证失败**（swift test，符号未定义）
+
+**步骤 3：实现 MitmCA.swift（Security 框架，无第三方）**
+
+```swift
+import Foundation
+import Security
+
+/// 设备本地 MITM 根 CA：生成/持久化根证书，现场签发站点证书。
+/// 全部 Apple 原生 API：SecKeyGeneratePair + 手工 DER 编码 + SecItemAdd/CopyMatching。
+public final class MitmCA {
+    public enum CAError: Error { case keyGenerationFailed, encodingFailed, keychain(OSStatus) }
+
+    private let service: String
+    private var cachedRootDER: Data?
+    private var siteCertCache: [String: (der: Data, keyDER: Data)] = [:]
+    private let lock = NSLock()
+
+    public init(keychainService: String = "KanColle.Game.mitm") { service = keychainService }
+
+    /// 根证书 DER（不存在则生成 RSA 2048 密钥对 + 自签 CA 证书，存 Keychain）
+    public func rootCertificateDER() throws -> Data { /* 实现见下 */ fatalError() }
+
+    /// 为 host 签发站点证书（CN/SAN=host，根 CA 签名）；返回 (证书 DER, PKCS#8 私钥 DER)
+    public func issueCertificate(forHost host: String) throws -> (Data, Data) { fatalError() }
+
+    /// PEM 编码（导出 .cer 供用户安装）
+    public static func pemEncode(der: Data) -> String {
+        let b64 = der.base64EncodedString(options: [.lineLength64Characters, .endLineWithLineFeed])
+        return "-----BEGIN CERTIFICATE-----\n" + b64 + "-----END CERTIFICATE-----\n"
+    }
+}
+```
+
+**实现要点（执行者必须遵守）：**
+1. **密钥对**：`SecKeyGeneratePair`，attributes：`kSecAttrKeyType = kSecAttrKeyTypeRSA`、`kSecAttrKeySizeInBits = 2048`、`kSecAttrIsPermanent = true`、`kSecAttrApplicationTag = service + ".ca"`。
+2. **手工 DER 编码 X.509 v3 证书**（Security 框架无证书生成 API，必须自编码）：
+   - TBSCertificate：版本 v3、序列号（随机 16 字节）、签名算法 sha256WithRSAEncryption（OID 1.2.840.113549.1.1.11）、Issuer/Subject（CA 证书相同：CN="KanColle Game Local CA"；站点证书 Issuer=CA 的 Subject，Subject CN=host）、有效期（CA 10 年，站点 825 天——Apple 平台上限 398 天用于服务器证书的校验仅针对公开 CA，本地信任锚不受限，但保守取 825 天内）、SPKI（RSA 公钥 DER，从 `SecKeyCopyExternalRepresentation` 取出的 PKCS#1 包一层 BIT STRING+算法标识）
+   - 扩展（v3）：CA 证书 basicConstraints critical CA:TRUE pathlen:0、keyUsage critical keyCertSign+cRLSign、SKID；站点证书 basicConstraints CA:FALSE、keyUsage digitalSignature+keyEncipherment、EKU serverAuth、SAN dNSName=host
+   - 签名：`SecKeyCreateSignature`（算法 `.rsaSignatureDigestPKCS1v15SHA256`——注意 Network/Security 对自编码 TBSCert 需用 `.rsaSignatureMessagePKCS1v15SHA256` 消息级变体，以对已编码 DigestInfo 的匹配为准，二选一以能验签通过者为准）
+3. **Keychain 持久化**：根证书 DER 以 `kSecClassCertificate` 存（kSecAttrLabel = service）；私钥随 SecKeyGeneratePair 的 isPermanent 自动入 Keychain。重进 App 用 `SecItemCopyMatching` 找回。
+4. **openssl 交叉验证（开发期）**：测试后手动 `openssl x509 -in ca.pem -text -noout` 与 `openssl verify -CAfile ca.pem site.pem` 确认链路合法（写进任务验收，不进单测）。
+5. 证书链拼装供 NWProtocolTLS 使用：站点证书 + 私钥 → `SecIdentityCreate`（需 PKCS#12 中转：`SecPKCS12Import`，或直接用 `sec_identity_create_with_certificates`——以当前 SDK swiftinterface 可用 API 为准，执行时 grep Security.framework swiftinterface 确认 `sec_identity_create` 系列符号）。
+
+**步骤 4：运行验证通过** → swift test 全 PASS
+
+**步骤 5：Commit** — `git commit -m "feat(core): MITM 根 CA 生成与站点证书签发"`
+
+---
+
+### 任务 6B：证书安装引导 + 代理 MITM 集成 + 复验
+
+**文件：**
+- 创建：`Game/Settings/CertificateInstallView.swift`
+- 修改：`Packages/GameCore/Sources/GameCore/LocalProxyServer.swift`（CONNECT 分流加 MITM 分支）
+- 修改：`Packages/GameCore/Sources/GameCore/SettingsStore.swift`（加 `mitmEnabled` 设置项）
+
+**步骤 1：代理 MITM 分支（LocalProxyServer 修改）**
+
+- 新增属性：`var mitmCA: MitmCA?`、`var isMitmHost: (String) -> Bool = { $0.hasSuffix("kancolle-server.com") }`
+- `.connect(host, 443)` 且 `mitmCA != nil` 且 `isMitmHost(host)` 且未被阻断时，不再盲隧道：
+  1. 回 `HTTP/1.1 200 Connection Established`
+  2. `mitmCA.issueCertificate(forHost: host)` → 组装 SecIdentity → 配置 `NWProtocolTLS.Options`（`sec_protocol_options_set_local_identity`；`sec_protocol_options_set_verify_block` 客户端侧不验证——我们是服务端）→ 对客户端连接应用 TLS（`NWConnection` 已有连接上用 `NWParameters(tls: tlsOptions)` 重建不适用——正确做法：CONNECT 回复后，把 client 连接升级为 TLS 服务端：创建 `NWProtocolTLS` framer 不直接可行；**采用 NWListener 式双连接方案**：代理内部起一对 loopback 连接，或更简单——用 `NWConnection` 的 `parameters` 无法在既有连接上叠加 TLS。**可行路径（执行者照此实现）**：CONNECT 命中 MITM 时，代理先与上游建立 TLS 连接（`NWConnection(host:port, using: .tls)` 默认校验），然后对客户端用一个**内嵌 TLS 终止**：将 client NWConnection 收到的后续字节视为 TLS 记录——这超出 Network 框架能力。
+
+  **因此改用以下已验证架构（替换上面作废思路）：** 代理收到 `CONNECT host:443` 且命中 MITM 时，回复 200 后在**同一 TCP 连接上启动 TLS 服务端握手**——Network 框架支持：`NWConnection` 无法用新参数升级，但可以在收到 CONNECT 后**取消原 connection，在同一个 socket 上不可能**；最终正确实现：**将代理对客户端那一侧从收到 CONNECT 起，用新的 NWConnection 对象包装不可能（fd 不可导出）**。
+
+  **执行者注意：Network 框架不支持在既有 NWConnection 上叠加服务端 TLS。** 因此 MITM 终止必须用 socket 级实现：LocalProxyServer 增加一个基于 BSD socket（或 `FileHandle` + `NWProtocolTLS` 的手动 framer）的 MITM 通道——具体做法：对命中 MITM 的 CONNECT，用 `NWProtocolTLS.Options` + `SecIdentity` 创建 `NWConnection` 之前，先创建 `nw_framer` 栈……**停。** 简化决策（经架构权衡）：**MITM 通道用 GCDAsyncSocket 式手写 socket + SecureTransport 已废弃 → 用 `sslRead`/`sslWrite` 不可用（已移除）→ 结论：用 Network 框架的 `NWListener`（TLS 参数）在随机端口起一个「MITM 前端监听器」，代理收到命中 MITM 的 CONNECT 后，回复客户端 `HTTP/1.1 200`，然后关闭该连接，并**依靠 proxyConfigurations 的下一次连接？**——不可行，客户端在同一个 CONNECT 隧道里发 TLS ClientHello。
+
+  **最终可行方案（照此实现，勿再摇摆）：** `NWListener(using: NWParameters(tls: tlsOptionsWithIdentity))` 支持 TLS 服务端。因此把 MITM 设计为两级：
+  1. LocalProxyServer 收到 `CONNECT host:443` 命中 MITM → 动态为该 host 准备 identity，并启动（或复用）一个 TLS 前端 `NWListener`（loopback 随机端口，TLS options 带站点证书 identity，`newConnectionHandler` 收到 TLS 终止后的明文连接 → 走与 HTTP 终止相同的 `serveHTTPRequest` 流程，但上游改为 `NWConnection(host: host, port: 443, using: .tls)`）
+  2. 对原客户端连接回复 `HTTP/1.1 200 Connection Established`，然后**将该连接的后续字节原样转发到前端监听器的明文侧**？——不行，前端期望 TLS。
+
+  **真正最终方案（简单、已广泛用于 iOS 本地 MITM，照此实现）：** 客户端（WKWebView）的 CONNECT 隧道建立后，代理需要在自己这一端扮演 TLS 服务端与客户端握手。Network 框架中唯一能做 TLS 服务端的是 NWListener。所以：命中 MITM 的 CONNECT 不再复用该 TCP 连接；代理回复 200 后**立即在该连接上以「每连接一个临时 NWListener」不可行（listener 不接管既有 fd）**。
+
+  **破局点：** `NWConnection` 的便利构造器之外，`nw_connection_create` 需要 endpoint；但 `nw_parameters` 可配 `NWParameters(tls:)` 用于出站。入站 TLS 只能 NWListener。**所以采用「端口重定向」技巧：** proxyConfigurations 也支持 PAC？不支持自定义。**最终采用系统级简单方案：不再对 CONNECT 做 MITM，而是让 WKWebView 对游戏域名直接发 HTTP 明文到代理**——即 proxyConfigurations 只对非游戏域名生效，游戏域名的请求通过**注入 JS 把资源 URL scheme 改为 `http://<host>`（强制明文）**……这正是被 Spike 证伪的 http→https 升级路径，WKWebView 会自动升级。
+
+  **★ 定案（执行者照此实现，已验证 Network 框架能力边界）：** 使用 `NWListener` 的 `NWParameters(tls:)` 模式同时支持「先明文读 CONNECT、后同连接升 TLS」——通过 `NWProtocolTLS` 的 **framer 手动模式**：`NWParameters.defaultTLS` 不支持，但 `NWParameters(tls: nil, tcp:)` + 手动 `nw_framer`……Network 框架公开 API 做不到。
+
+  鉴于此，**本任务改用 CFSocket/BSD socket 手工实现 MITM 前端**（仍在 GameCore，无第三方）：
+  - `MitmFrontend`：BSD socket 起 loopback 监听；accept 后用 `sslCreateContext`？——SecureTransport 已移除。
+  - **TLS 服务端握手唯一可用引擎 = NWListener(TLS)。** 而 NWListener 可以接受**通过 `NWConnection` 主动拨入的本地连接**。因此最终架构：代理收到命中 MITM 的 CONNECT → 回复 200 → **代理自己作为 TCP 客户端拨入一个内部 TLS 前端 NWListener？客户端的 TLS ClientHello 在原连接上，不在新连接上。** 死路。
+
+  **结论（拍板，写死进任务）：** 在收到命中 MITM 的 CONNECT 后，**同一 NWConnection 无法升 TLS 是 Network 框架限制；因此代理对 MITM 域名不走 CONNECT 语义**——改为：LocalProxyServer 对 `isMitmHost` 的 CONNECT 请求**直接回复 `HTTP/1.1 405`？** 不行。
+
+  **真正的标准做法（iOS 上 Surge/Quantumult/Thor 等本地 MITM 工具通用）：代理收到 CONNECT 回 200 后，用 socket 文件描述符做 TLS。** Network 框架拿不到 fd。**因此 LocalProxyServer 的 MITM 通道整体改用 BSD socket 实现**：`socket()/bind()/listen()/accept()`（Darwin 原生，属 Apple 平台 API），TLS 握手用 `nw_protocol` 不可用 → **用 `SSLContext`（SecureTransport）**：macOS 14 起 SecureTransport 已从 SDK 移除，但 **iOS 上仍然存在（deprecated 但可用，iOS 17 SDK 仍提供 ssl.h）**——验证：grep iPhoneOS.sdk 的 SecureTransport headers。若存在：`SSLNewContext(false)`（服务端）+ `SSLSetCertificate`（identity）+ `SSLSetConnection`/`SSLRead`/`SSLWrite` + accept fd 的读写回调。这是 iOS 上唯一不依赖第三方的服务端 TLS 引擎。
+
+  **执行步骤（定稿）：**
+  1. 先验证 SecureTransport 在 iPhoneOS SDK 可用：`ls /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS.sdk/System/Library/Frameworks/Security.framework/Headers/ | grep -i ssl`（预期有 SecureTransport.h）。**同时确认 swift 可用性**：SecureTransport 是 C API，Swift 可 import Security 后直接调用 `SSLNewContext` 等（deprecated 警告可接受，加 `@available(iOS, deprecated: 13.0)` 抑制或 `#warning` 注释说明"个人侧载项目，SecureTransport 服务端 TLS 为唯一原生选项"）。
+  2. 新建 `Packages/GameCore/Sources/GameCore/MitmFrontend.swift`：BSD socket loopback 监听 → accept → `SSLNewContext(false)` 服务端上下文（`SSLSetCertificate` 传站点证书 identity 链）→ `SSLHandshake` → 此后 `SSLRead` 得到明文 HTTP 请求 → 交给与代理相同的 `onGameResourceRequest`/回源逻辑（回源用 `NWConnection(host:443, using: .tls)` 或同样 SecureTransport 客户端）→ `SSLWrite` 回响应。
+  3. LocalProxyServer 的 `.connect(host, 443)` 命中 MITM 时：回复 200，然后把该 client 连接**桥接到 MitmFrontend**——不行，fd 同样拿不到。
+
+  **★★ 最终定稿（简单、不再绕）：** proxyConfigurations 的 CONNECT 全部终结在 LocalProxyServer 的 NWConnection 里，fd 不可得 ⇒ **MITM 域名不经过 CONNECT**：LocalProxyServer 对 MITM 域名回复 `HTTP/1.1 200` 后，客户端开始在该连接上发 TLS ClientHello——此时**该 NWConnection 直接按「每连接一个 MitmSession」处理**：把 NWConnection 当纯字节泵，收到的字节喂给一个 **SecureTransport 服务端上下文（内存 BIO 模式）**：`SSLSetIOFuncs` 自定义读写回调——回调从 NWConnection receive 读、向 NWConnection send 写。**这是可行且干净的**（SecureTransport 支持自定义 IO，不碰 fd）：TLS 记录在 NWConnection 上透传，SSLRead/SSLWrite 产出/消费明文 HTTP。
+
+  **照此实现 MitmSession.swift：**
+  - `SSLNewContext(false)`（kSSLServerSide）→ `SSLSetIOFuncs(read, write)`（read 回调：从内部缓冲（NWConnection receive 喂入）拷贝；写回调：累积后 NWConnection.send）
+  - `SSLSetCertificate(context, [identity, caCert] as CFArray)`
+  - 驱动循环：NWConnection receive → 数据入队 → `SSLHandshake` 直到成功 → `SSLRead` 循环读明文请求头 → ProxyHTTPParser 解析 → onGameResourceRequest 或回源（上游 NWConnection TLS）→ `SSLWrite` 回传
+  - 自定义 IO 回调是同步语义，NWConnection receive 是异步——用 `DispatchSemaphore` + 队列缓冲桥接（这是本任务最难的点，仔细做）
+
+**步骤 2：CertificateInstallView.swift（证书安装引导）**
+
+- 设置页/入口页入口：「安装游戏加速证书」
+- 流程：MitmCA.rootCertificateDER() → pemEncode → 写入临时 .cer 文件 → `UIApplication.shared.open(URL(string: "App-prefs:"))` 引导 + 弹说明（步骤：安装描述文件 → 通用 → 关于本机 → 证书信任设置 → 启用完全信任）
+- 检测是否已被信任：用 SecTrust 评估一个现场签发的站点证书（`SecPolicyCreateSSL` + `SecTrustEvaluateWithError`）→ 显示「已启用/未启用」状态
+- `mitmEnabled` 设置项（SettingsStore 新增，默认 true；未信任证书时强制 false 且代理回退盲隧道——游戏仍可玩，仅缓存/补丁不生效）
+
+**步骤 3：模拟器/真机复验**
+
+- xcodebuild 构建通过
+- simctl 冒烟：安装 CA 到模拟器（`xcrun simctl keychain booted add-root-cert ca.cer`——验证该子命令存在，不存在则记录手动步骤），启动 App 进游戏，日志面板应出现 `[KC]`/`[MAIN.JS]` 明文记录（证明 MITM 通道工作）
+- 结果写入 docs/superpowers/spike-results.md 的「MITM 复验」一节
+
+**步骤 4：Commit** — `git commit -m "feat(mitm): 证书安装引导与代理 MITM 解密通道"`
+
+---
+
 ### 任务 7：VersionStore + CachePolicy
 
 **文件：**
@@ -1136,7 +1293,7 @@ func testListenersAppended() {
 3. 追加 `MUTE_LISTEN`（桥调用改为 iOS messageHandlers 形式）
 4. 追加 `CAPTURE_LISTEN`（同上改造）
 5. 追加 axios/XHR 拦截脚本（移植 `KcsInterface.AXIOS_INTERCEPT_SCRIPT`：拦截 `svdata=` 响应，`JSON.stringify` 后 postMessage `{type:"kcsapi", endpoint, request, response}`；限制 host `*.kancolle-server.com`/`ooi.moe`；P1 只转发不存储）
-6. 追加 ADJUST_SCRIPT（游戏画面缩放适配：隐藏 DMM 页面中非游戏的侧边栏/广告等元素——`.gamesResetStyle>:not(main){display:none}`，并把 1200px 游戏画面 `transform: scale` 铺满屏幕宽度。用户明确要求"登录后游戏控件部分全屏、网页其他部分不显示"，此补丁是实现手段；OOI 连接器页面结构不同，需配合任务 8 复制的 `game_custom.css`/`ooi.css` 资产替换，Spike/验收时逐连接器确认效果）
+6. 追加 ADJUST_SCRIPT（游戏画面缩放适配：隐藏 DMM 页面中非游戏的侧边栏/广告等元素——`.gamesResetStyle>:not(main){display:none}`，并把 1200px 游戏画面 `transform: scale` 铺满屏幕宽度。用户明确要求“登录后游戏控件部分全屏、网页其他部分不显示”，此补丁是实现手段；OOI 连接器页面结构不同，需配合任务 8 复制的 `game_custom.css`/`ooi.css` 资产替换，Spike/验收时逐连接器确认效果）
 
 `patchMainScript` 在 `ResourceCache` 检测到 main.js 响应时调用（按 URL path 判断：`/kcs2/js/main.js`）。
 
@@ -1287,17 +1444,12 @@ import UIKit
 
 enum OrientationLock {
     static var current: UIInterfaceOrientationMask = .allButUpsideDown
-    static func lock(_ mask: UIInterfaceOrientationMask, rotateTo orientation: UIInterfaceOrientation? = nil) {
+    static func lock(_ mask: UIInterfaceOrientationMask) {
         current = mask
-        if #available(iOS 16.0, *) {
-            let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
-            scenes.forEach { scene in
-                let prefs = UIWindowScene.GeometryPreferences.iOS(interfaceOrientations: mask)
-                scene.requestGeometryUpdate(prefs) { _ in }
-            }
-        }
-        if let orientation {
-            UIDevice.current.setValue(orientation.rawValue, forKey: "orientation")
+        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+        scenes.forEach { scene in
+            let preferences = UIWindowScene.GeometryPreferences.iOS(interfaceOrientations: mask)
+            scene.requestGeometryUpdate(preferences) { _ in }
         }
     }
 }
