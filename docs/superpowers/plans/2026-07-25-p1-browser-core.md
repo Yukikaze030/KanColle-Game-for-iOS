@@ -15,8 +15,8 @@
 - iOS 17+ WKWebView 可能把 HTTPS 页面中的 HTTP 子资源自动升级为 HTTPS（导致代理看不到内容）——这是**任务 6 Spike 要验证的头号风险**。
 - 工程当前 `IPHONEOS_DEPLOYMENT_TARGET = 26.5`，需降到 17.0。Bundle ID `KanColle.Game`。
 - 构建验证命令（每个任务结束必须跑）：
-  `xcodebuild -project /Users/haozhe/WorkTest/Game/Game.xcodeproj -scheme Game -destination 'generic/platform=iOS Simulator' build`
-  逻辑包测试：`cd /Users/haozhe/WorkTest/Game/Packages/GameCore && swift test`
+  `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcodebuild -project /Users/haozhe/WorkTest/Game/Game.xcodeproj -scheme Game -destination 'generic/platform=iOS Simulator' build`
+  逻辑包测试：`cd /Users/haozhe/WorkTest/Game/Packages/GameCore && DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test`（本机 xcode-select 指向 Command Line Tools，所有 swift test / xcodebuild 命令都必须带 DEVELOPER_DIR 前缀）
 
 ---
 
