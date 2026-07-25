@@ -95,6 +95,127 @@ public struct BattlePhaseDecoder: Sendable {
         )
     }
 
+    /// Decodes vector-shaped battle phases in KcaBattle.processData order.
+    public func decodeVectorPhases(from data: JSONValue) -> [BattlePhaseResult] {
+        guard let object = data.objectValue else { return [] }
+        var phases: [BattlePhaseResult] = []
+        appendAir(object["api_air_base_injection"], kind: .airBase, to: &phases)
+        appendAir(object["api_injection_kouku"], kind: .aerial, to: &phases)
+        if let attacks = object["api_air_base_attack"]?.arrayValue {
+            for attack in attacks {
+                appendAir(attack, kind: .airBase, to: &phases)
+            }
+        }
+        appendAir(object["api_kouku"], kind: .aerial, to: &phases)
+        appendAir(object["api_kouku2"], kind: .aerial, to: &phases)
+        appendSupport(object["api_support_info"], to: &phases)
+        appendTorpedo(object["api_opening_atack"], kind: .openingTorpedo, to: &phases)
+        appendTorpedo(object["api_raigeki"], kind: .torpedo, to: &phases)
+        return phases
+    }
+
+    private func appendAir(
+        _ value: JSONValue?,
+        kind: BattlePhaseKind,
+        to phases: inout [BattlePhaseResult]
+    ) {
+        guard let object = value?.objectValue else { return }
+        var warnings: [BattleParseWarning] = []
+        var events: [DamageEvent] = []
+        if let stage = object["api_stage3"]?.objectValue {
+            events += vectorEvents(stage["api_fdam"], friendly: true, combinedOnly: false, field: "api_fdam", warnings: &warnings)
+            events += vectorEvents(stage["api_edam"], friendly: false, combinedOnly: false, field: "api_edam", warnings: &warnings)
+        }
+        if let stage = object["api_stage3_combined"]?.objectValue {
+            events += vectorEvents(stage["api_fdam"], friendly: true, combinedOnly: true, field: "api_fdam_combined", warnings: &warnings)
+            events += vectorEvents(stage["api_edam"], friendly: false, combinedOnly: true, field: "api_edam_combined", warnings: &warnings)
+        }
+        if !events.isEmpty || !warnings.isEmpty {
+            phases.append(.init(kind: kind, events: events, warnings: warnings))
+        }
+    }
+
+    private func appendSupport(_ value: JSONValue?, to phases: inout [BattlePhaseResult]) {
+        guard let object = value?.objectValue else { return }
+        let damage = object["api_support_airatack"]?.objectValue?["api_stage3"]?.objectValue?["api_edam"]
+            ?? object["api_support_hourai"]?.objectValue?["api_damage"]
+        var warnings: [BattleParseWarning] = []
+        let events = vectorEvents(
+            damage, friendly: false, combinedOnly: false,
+            field: "api_support_damage", warnings: &warnings
+        )
+        if !events.isEmpty || !warnings.isEmpty {
+            phases.append(.init(kind: .support, events: events, warnings: warnings))
+        }
+    }
+
+    private func appendTorpedo(
+        _ value: JSONValue?,
+        kind: BattlePhaseKind,
+        to phases: inout [BattlePhaseResult]
+    ) {
+        guard let object = value?.objectValue else { return }
+        var warnings: [BattleParseWarning] = []
+        let events = vectorEvents(
+            object["api_fdam"], friendly: true, combinedOnly: false,
+            field: "api_fdam", warnings: &warnings
+        ) + vectorEvents(
+            object["api_edam"], friendly: false, combinedOnly: false,
+            field: "api_edam", warnings: &warnings
+        )
+        if !events.isEmpty || !warnings.isEmpty {
+            phases.append(.init(kind: kind, events: events, warnings: warnings))
+        }
+    }
+
+    private func vectorEvents(
+        _ value: JSONValue?,
+        friendly: Bool,
+        combinedOnly: Bool,
+        field: String,
+        warnings: inout [BattleParseWarning]
+    ) -> [DamageEvent] {
+        guard let values = value?.arrayValue else { return [] }
+        return values.enumerated().compactMap { offset, value in
+            guard let damage = battleDamage(value) else {
+                if value != .null {
+                    warnings.append(.init(field: field, message: "invalid damage at index \(offset)"))
+                }
+                return nil
+            }
+            guard damage > 0 else { return nil }
+            let component: BattleFleetComponent
+            let index: Int
+            if combinedOnly {
+                component = .escort
+                index = offset
+            } else if offset >= 6 {
+                component = .escort
+                index = offset - 6
+            } else {
+                component = .main
+                index = offset
+            }
+            return DamageEvent(
+                target: .init(component: component, index: index),
+                targetIsFriendly: friendly,
+                damage: damage
+            )
+        }
+    }
+
+    /// Matches Java Float.intValue(): finite floating damage truncates toward zero.
+    private func battleDamage(_ value: JSONValue) -> Int? {
+        switch value {
+        case .integer(let number): return Int(exactly: number)
+        case .number(let number) where number.isFinite: return Int(number)
+        case .string(let text):
+            guard let number = Double(text), number.isFinite else { return nil }
+            return Int(number)
+        default: return nil
+        }
+    }
+
     private func optionalFleet(
         maximum: JSONValue?,
         current: JSONValue?,
