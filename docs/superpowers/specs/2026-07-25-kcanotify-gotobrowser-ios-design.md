@@ -149,7 +149,7 @@ HTTPS 下本地代理看不到内容（只能看到 CONNECT 目标），因此�
 
 ## 9. 数据层
 
-- **SQLite**（使用 GRDB.swift）：用户舰娘/装备快照、任务进度、掉落日志、资源日志、错误日志、资源版本表（移植 `KcaDBHelper` 与 `VersionDatabase` 表结构）
+- **SQLite**（P1 使用系统 SQLite3 C API 薄封装，避免 SPM 依赖；P2 起可评估引入 GRDB.swift）：用户舰娘/装备快照、任务进度、掉落日志、资源日志、错误日志、资源版本表（移植 `KcaDBHelper` 与 `VersionDatabase` 表结构）
 - **UserDefaults**：全部设置项（移植 `KcaConstants.PREF_*` 与 GotoBrowser `Constants.PREF_*` 键设计）
 - **Keychain**：DMM 账号密码
 - **文件缓存**（沙盒 Caches 目录）：`browser_cache/` 游戏资源、`subtitle/` 字幕数据、`patch/` KCCP 补丁、图片资源；缓存过期策略移植（Last-Modified 304 + max-age）
