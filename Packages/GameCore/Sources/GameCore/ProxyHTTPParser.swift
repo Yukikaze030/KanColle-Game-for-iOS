@@ -47,6 +47,8 @@ public struct ProxyHTTPParser {
                             String(line[line.index(after: i)...]).trimmingCharacters(in: .whitespaces)))
         }
         if method.uppercased() == "CONNECT" {
+            // IPv6 字面量（如 [::1]:443）不在 P1 支持范围，判 invalid
+            guard !target.contains("[") else { return .invalid }
             let hp = target.split(separator: ":")
             guard let h = hp.first else { return .invalid }
             return .connect(host: String(h), port: hp.count > 1 ? Int(hp[1]) ?? 443 : 443)
@@ -59,7 +61,8 @@ public struct ProxyHTTPParser {
         if target.lowercased().hasPrefix("http://"), let u = URL(string: target) {
             host = u.host ?? host
             port = u.port ?? 80
-            path = u.path + (u.query.map { "?" + $0 } ?? "")
+            let p = u.path.isEmpty ? "/" : u.path
+            path = p + (u.query.map { "?" + $0 } ?? "")
         }
         guard !host.isEmpty else { return .invalid }
         return .request(HTTPRequestHead(method: method, path: path, host: host, port: port, headers: headers))
