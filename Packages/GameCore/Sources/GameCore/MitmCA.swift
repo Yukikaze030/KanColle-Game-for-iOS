@@ -4,9 +4,11 @@ import Security
 
 /// A device-local certificate authority used only for the game's HTTPS hosts.
 ///
-/// The root RSA key is non-exportable at this API boundary and remains in the
-/// Keychain. Site keys are short-lived, exportable PKCS#1 representations so a
-/// later TLS layer can recreate `SecKey` and call `SecIdentityCreate`.
+/// The root RSA key is not exposed by this API and remains in the Keychain.
+/// Software RSA Keychain keys are not hardware-backed and cannot be guaranteed
+/// non-extractable with the macOS-only `kSecAttrIsExtractable` attribute. Site
+/// keys are short-lived, exportable PKCS#1 representations so a later TLS layer
+/// can recreate `SecKey` and call `SecIdentityCreate`.
 public final class MitmCA: @unchecked Sendable {
     public enum CAError: Error, Equatable {
         case invalidHost
@@ -263,12 +265,8 @@ public final class MitmCA: @unchecked Sendable {
         persistenceLock.lock()
         defer { persistenceLock.unlock() }
 
-        let certificateDER = try? ca.copyStoredRootCertificate()
         let privateKey = try? ca.copyStoredRootPrivateKey()
-        try? ca.removeStoredMaterial(
-            certificateDER: certificateDER,
-            privateKey: privateKey
-        )
+        try? ca.removeStoredMaterial(privateKey: privateKey)
     }
 
     // MARK: - Root persistence
@@ -303,10 +301,7 @@ public final class MitmCA: @unchecked Sendable {
 
         // Recover atomically from a prior interrupted first-run generation.
         if storedCertificate != nil || storedPrivateKey != nil {
-            try removeStoredMaterial(
-                certificateDER: storedCertificate,
-                privateKey: storedPrivateKey
-            )
+            try removeStoredMaterial(privateKey: storedPrivateKey)
         }
         // If both lookups are empty, an old-version certificate-only item
         // cannot be attributed to this service because macOS may rewrite its
@@ -314,7 +309,6 @@ public final class MitmCA: @unchecked Sendable {
         // and metadata-first writes below can no longer create this state.
 
         let (publicKey, privateKey) = try generatePersistentRootKeyPair()
-        var newCertificateDER: Data?
         do {
             let certificateDER = try Self.makeCertificate(
                 subjectCommonName: Self.rootCommonName,
@@ -325,7 +319,6 @@ public final class MitmCA: @unchecked Sendable {
                 isCA: true,
                 dnsName: nil
             )
-            newCertificateDER = certificateDER
             // Stable metadata is the commit marker. The certificate-class item
             // is written second and repaired on load if creation was interrupted.
             try storeRootMetadata(certificateDER)
@@ -338,10 +331,7 @@ public final class MitmCA: @unchecked Sendable {
             return material
         } catch {
             do {
-                try removeStoredMaterial(
-                    certificateDER: newCertificateDER,
-                    privateKey: privateKey
-                )
+                try removeStoredMaterial(privateKey: privateKey)
             } catch let cleanupError {
                 throw cleanupError
             }
@@ -403,7 +393,6 @@ public final class MitmCA: @unchecked Sendable {
             kSecAttrKeySizeInBits: 2_048,
             kSecPrivateKeyAttrs: [
                 kSecAttrIsPermanent: true,
-                kSecAttrIsExtractable: false,
                 kSecAttrApplicationTag: rootKeyTag,
                 kSecAttrAccessible: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
             ]
@@ -486,31 +475,17 @@ public final class MitmCA: @unchecked Sendable {
         return true
     }
 
-    private func removeStoredMaterial(
-        certificateDER: Data?,
-        privateKey: SecKey?
-    ) throws {
-        var deletedKeyMatchedCertificate = false
+    private func removeStoredMaterial(privateKey: SecKey?) throws {
         if let privateKey,
            let certificate = try findClassCertificate(matching: privateKey) {
             try Self.deleteItem([
                 kSecClass: kSecClassCertificate,
                 kSecValueRef: certificate
             ])
-            deletedKeyMatchedCertificate = true
         }
-        // If a replacement/corrupt key has no certificate, metadata is the
-        // remaining precise locator. If both locate different certificates,
-        // prefer the key-matched item so corrupt metadata cannot delete another
-        // service's otherwise healthy certificate.
-        if !deletedKeyMatchedCertificate,
-           let certificateDER,
-           SecCertificateCreateWithData(
-               nil,
-               certificateDER as CFData
-           ) != nil {
-            try Self.deleteItem(try Self.classCertificateQuery(certificateDER))
-        }
+        // Never trust metadata DER as certificate ownership proof during
+        // recovery: corrupted service A metadata may point at service B.
+        // Unprovable certificate-class items are harmless orphans.
 
         try Self.deleteItem([
             kSecClass: kSecClassKey,

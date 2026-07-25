@@ -95,6 +95,16 @@ final class MitmCATests: XCTestCase {
         )
     }
 
+    private func registerOrphanCertificateCleanup(der: Data) {
+        addTeardownBlock { [self] in
+            let status = SecItemDelete(try certificateQuery(der: der) as CFDictionary)
+            XCTAssertTrue(
+                status == errSecSuccess || status == errSecItemNotFound,
+                "unexpected certificate cleanup status: \(status)"
+            )
+        }
+    }
+
     private func certificateExists(der: Data) throws -> Bool {
         var query = try certificateQuery(der: der)
         query[kSecReturnRef] = true
@@ -162,17 +172,55 @@ final class MitmCATests: XCTestCase {
         )
     }
 
-    func testMismatchedPrivateKeyRecoversAndRemovesOwnedCertificate() throws {
+    func testMismatchedPrivateKeyRecoversAndPreservesUnprovableCertificate() throws {
         let service = makeService()
         let original = try MitmCA(keychainService: service).rootCertificateDER()
+        registerOrphanCertificateCleanup(der: original)
         deletePrivateKey(service: service)
         try createReplacementPrivateKey(service: service)
 
         let recovered = try MitmCA(keychainService: service).rootCertificateDER()
 
         XCTAssertNotEqual(recovered, original)
-        XCTAssertFalse(try certificateExists(der: original))
+        XCTAssertTrue(try certificateExists(der: original))
         XCTAssertTrue(try certificateExists(der: recovered))
+    }
+
+    func testMissingAKeyAndMetadataPointingToBDoesNotDeleteBCertificate() throws {
+        let service = makeService()
+        let otherService = makeService()
+        let original = try MitmCA(keychainService: service).rootCertificateDER()
+        registerOrphanCertificateCleanup(der: original)
+        let other = try MitmCA(keychainService: otherService).rootCertificateDER()
+        deletePrivateKey(service: service)
+        updateMetadata(service: service, certificateDER: other)
+
+        let recovered = try MitmCA(keychainService: service).rootCertificateDER()
+
+        XCTAssertNotEqual(recovered, other)
+        XCTAssertTrue(try certificateExists(der: other))
+        XCTAssertEqual(
+            try MitmCA(keychainService: otherService).rootCertificateDER(),
+            other
+        )
+    }
+
+    func testMissingACertificateWithMetadataPointingToBDoesNotDeleteB() throws {
+        let service = makeService()
+        let otherService = makeService()
+        let original = try MitmCA(keychainService: service).rootCertificateDER()
+        let other = try MitmCA(keychainService: otherService).rootCertificateDER()
+        try deleteCertificate(der: original)
+        updateMetadata(service: service, certificateDER: other)
+
+        let recovered = try MitmCA(keychainService: service).rootCertificateDER()
+
+        XCTAssertNotEqual(recovered, other)
+        XCTAssertTrue(try certificateExists(der: other))
+        XCTAssertEqual(
+            try MitmCA(keychainService: otherService).rootCertificateDER(),
+            other
+        )
     }
 
     func testKeyOnlyInterruptedStateRegeneratesRoot() throws {
