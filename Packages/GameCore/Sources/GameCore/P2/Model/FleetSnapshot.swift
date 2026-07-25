@@ -14,10 +14,40 @@ public struct UserShip: Sendable, Equatable {
     public let currentHP: Int
     public let maximumHP: Int
     public let condition: Int
+    public let fuel: Int
+    public let ammunition: Int
     public let slotItemIDs: [Int]
     public let aircraftCounts: [Int]
     public let extraSlotItemID: Int?
     public let locked: Bool
+
+    public init(
+        id: Int,
+        masterShipID: Int,
+        level: Int,
+        currentHP: Int,
+        maximumHP: Int,
+        condition: Int,
+        fuel: Int = 0,
+        ammunition: Int = 0,
+        slotItemIDs: [Int],
+        aircraftCounts: [Int],
+        extraSlotItemID: Int?,
+        locked: Bool
+    ) {
+        self.id = id
+        self.masterShipID = masterShipID
+        self.level = level
+        self.currentHP = currentHP
+        self.maximumHP = maximumHP
+        self.condition = condition
+        self.fuel = fuel
+        self.ammunition = ammunition
+        self.slotItemIDs = slotItemIDs
+        self.aircraftCounts = aircraftCounts
+        self.extraSlotItemID = extraSlotItemID
+        self.locked = locked
+    }
 
     /// Kcanotify uses `nowhp * 4 <= maxhp` for the basic taiha determination.
     public var isHeavilyDamaged: Bool {
@@ -146,6 +176,72 @@ public struct FleetSnapshot: Sendable, Equatable {
         repairDocks = Dictionary(uniqueKeysWithValues: values.compactMap(Self.parseRepairDock).map { ($0.id, $0) })
     }
 
+    @discardableResult
+    mutating func replaceDeck(_ deck: FleetDeck) -> Bool {
+        let changed = decks[deck.id] != deck
+        decks[deck.id] = deck
+        return changed
+    }
+
+    @discardableResult
+    mutating func updateShip(
+        id: Int,
+        currentHP: Int? = nil,
+        condition: Int? = nil,
+        fuel: Int? = nil,
+        ammunition: Int? = nil,
+        aircraftCounts: [Int]? = nil
+    ) -> Bool {
+        guard let previous = ships[id] else { return false }
+        let updated = UserShip(
+            id: previous.id,
+            masterShipID: previous.masterShipID,
+            level: previous.level,
+            currentHP: currentHP ?? previous.currentHP,
+            maximumHP: previous.maximumHP,
+            condition: condition ?? previous.condition,
+            fuel: fuel ?? previous.fuel,
+            ammunition: ammunition ?? previous.ammunition,
+            slotItemIDs: previous.slotItemIDs,
+            aircraftCounts: aircraftCounts ?? previous.aircraftCounts,
+            extraSlotItemID: previous.extraSlotItemID,
+            locked: previous.locked
+        )
+        guard updated != previous else { return false }
+        ships[id] = updated
+        return true
+    }
+
+    @discardableResult
+    mutating func setDeckShipIDs(deckID: Int, shipIDs: [Int]) -> Bool {
+        guard let previous = decks[deckID] else { return false }
+        let updated = FleetDeck(
+            id: previous.id,
+            name: previous.name,
+            shipIDs: shipIDs.filter { $0 > 0 },
+            expedition: previous.expedition
+        )
+        return replaceDeck(updated)
+    }
+
+    @discardableResult
+    mutating func setDeckExpedition(deckID: Int, expedition: ExpeditionState?) -> Bool {
+        guard let previous = decks[deckID] else { return false }
+        return replaceDeck(FleetDeck(
+            id: previous.id,
+            name: previous.name,
+            shipIDs: previous.shipIDs,
+            expedition: expedition
+        ))
+    }
+
+    @discardableResult
+    mutating func setRepairDock(_ dock: RepairDock) -> Bool {
+        let changed = repairDocks[dock.id] != dock
+        repairDocks[dock.id] = dock
+        return changed
+    }
+
     mutating func updateAdmiral(from value: JSONValue) {
         guard let object = value.objectValue else { return }
         admiral = AdmiralSnapshot(
@@ -165,6 +261,8 @@ public struct FleetSnapshot: Sendable, Equatable {
             currentHP: object.int("api_nowhp") ?? previous?.currentHP ?? 0,
             maximumHP: object.int("api_maxhp") ?? previous?.maximumHP ?? 0,
             condition: object.int("api_cond") ?? previous?.condition ?? 0,
+            fuel: object.int("api_fuel") ?? previous?.fuel ?? 0,
+            ammunition: object.int("api_bull") ?? previous?.ammunition ?? 0,
             slotItemIDs: object["api_slot"] == nil ? (previous?.slotItemIDs ?? []) : object.intArray("api_slot").filter { $0 > 0 },
             aircraftCounts: object["api_onslot"] == nil ? (previous?.aircraftCounts ?? []) : object.intArray("api_onslot"),
             extraSlotItemID: normalizedPositive(object.int("api_slot_ex")) ?? previous?.extraSlotItemID,
