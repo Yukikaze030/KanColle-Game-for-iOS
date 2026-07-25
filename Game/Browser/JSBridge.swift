@@ -24,6 +24,9 @@ final class JSBridge: NSObject, WKScriptMessageHandler {
             onEvent(.apiError(code: dict["code"] as? Int ?? 0))
         case "memory":
             onEvent(.memoryReport(jsHeapMB: dict["jsHeapMB"] as? Double ?? 0))
+        // TODO(任务6后清理)：Spike 探针脚本的显式 log 通道（提取 text 字段）
+        case "log":
+            onEvent(.log(dict["text"] as? String ?? String(describing: message.body)))
         default:
             onEvent(.log(String(describing: message.body)))
         }

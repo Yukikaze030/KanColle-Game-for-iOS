@@ -9,6 +9,12 @@ struct BrowserView: UIViewRepresentable {
     let settings: SettingsStore
     let bridge: JSBridge
 
+    // TODO(任务6后清理)：Spike 探针脚本（kcsapi XHR 钩子 + main.js 改写标记检测）
+    private static let spikeProbeScript = """
+    (function(){var O=XMLHttpRequest.prototype.open;XMLHttpRequest.prototype.open=function(m,u){try{if(u&&u.indexOf("/kcsapi/")>=0){window.webkit.messageHandlers.gotoBrowser.postMessage({type:"kcsapi",endpoint:String(u).split("?")[0],request:null,response:""});}}catch(e){}return O.apply(this,arguments);};})();
+    window.addEventListener("load",function(){try{if(window.__SPIKE_PATCHED){window.webkit.messageHandlers.gotoBrowser.postMessage({type:"log",text:"SPIKE_PATCHED_OK"});}}catch(e){}});
+    """
+
     func makeCoordinator() -> WebViewCoordinator { WebViewCoordinator() }
 
     func makeUIView(context: Context) -> WKWebView {
@@ -31,6 +37,14 @@ struct BrowserView: UIViewRepresentable {
                                        injectionTime: .atDocumentStart, forMainFrameOnly: true)
         config.userContentController.addUserScript(viewport)
         config.userContentController.addUserScript(memoryProbe)
+        // TODO(任务6后清理)：Spike 探针脚本（合并为一条 WKUserScript）：
+        // 1) kcsapi XHR 钩子——只验证钩子能装进游戏 iframe 并触发桥，不解析响应；
+        // 2) main.js 改写验证——代理在 main.js 末尾追加 window.__SPIKE_PATCHED=1，
+        //    页面 load 后若读到该标记则上报 SPIKE_PATCHED_OK（证明改写+注入全链路通）。
+        // forMainFrameOnly: false——游戏跑在 iframe 里，必须进 iframe 才能钩到。
+        let spikeProbe = WKUserScript(source: Self.spikeProbeScript,
+                                      injectionTime: .atDocumentStart, forMainFrameOnly: false)
+        config.userContentController.addUserScript(spikeProbe)
         config.userContentController.add(bridge, name: "gotoBrowser")
 
         let wv = WKWebView(frame: .zero, configuration: config)

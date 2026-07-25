@@ -67,6 +67,14 @@ struct RootView: View {
                     .foregroundStyle(.red)
             }
         }
+        .onAppear {
+            // TODO(任务6后清理)：冒烟测试钩子——支持启动参数 -SpikeConnector <rawValue>
+            //（如 "DMM direct"）自动选择连接器，省去人工点击；默认不带参数时停在选择页。
+            guard proxyState == .idle,
+                  let raw = UserDefaults.standard.string(forKey: "SpikeConnector"),
+                  let connector = BrowserConstants.Connector(rawValue: raw) else { return }
+            selectConnector(connector)
+        }
     }
 
     // TODO(任务6后清理)：Spike 连接器选择——点击后才装探针、启动代理
@@ -103,13 +111,27 @@ struct RootView: View {
             if entry.blocked { line = "[B] " + line }
             Task { @MainActor in store.recordProxyLog(line) }
         }
-        // main.js 补丁探针 + 通用明文游戏流量探针：本任务不缓存，一律放行（nil），仅打日志。
+        // 明文游戏流量探针 + main.js 内容改写探针。
         // 注意：此回调仅对 isInspectableHost 命中的请求触发，故全部加 [KC] 前缀。
         proxy.onGameResourceRequest = { head in
+            let isMainJS = head.path.contains("/kcs2/js/main.js")
             var line = "[KC] "
-            if head.path.contains("/kcs2/js/main.js") { line += "[MAIN.JS] " }
+            if isMainJS { line += "[MAIN.JS] " }
             line += "\(head.method) \(head.host)\(head.path)"
             Task { @MainActor in store.recordProxyLog(line) }
+            // TODO(任务6后清理)：main.js 内容改写探针——同步拉取上游完整内容，
+            // body 末尾追加 window.__SPIKE_PATCHED=1 标记后本地返回，
+            // 验证"代理可改写响应内容"（页面侧探针脚本读到标记后上报 SPIKE_PATCHED_OK）。
+            // 回调在代理并发队列触发，阻塞单个线程 Spike 阶段可接受；拉取失败则放行回源。
+            if isMainJS, let url = URL(string: "http://\(head.host)\(head.path)"),
+               var body = try? Data(contentsOf: url, options: .uncached) {
+                body.append(Data(";window.__SPIKE_PATCHED=1;".utf8))
+                Task { @MainActor in store.recordProxyLog("[KC] [MAIN.JS] PATCHED \(body.count)B") }
+                return ResourceResponse(statusCode: 200,
+                                        headers: [("Content-Type", "application/javascript")],
+                                        body: body)
+            }
+            // 其余请求一律放行（nil），本任务不缓存
             return nil
         }
         // kcsapi / 内存探针 / 截图 / API 错误事件（WKScriptMessageHandler 本就在主线程回调）
