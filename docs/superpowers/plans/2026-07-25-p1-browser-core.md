@@ -1136,7 +1136,7 @@ func testListenersAppended() {
 3. 追加 `MUTE_LISTEN`（桥调用改为 iOS messageHandlers 形式）
 4. 追加 `CAPTURE_LISTEN`（同上改造）
 5. 追加 axios/XHR 拦截脚本（移植 `KcsInterface.AXIOS_INTERCEPT_SCRIPT`：拦截 `svdata=` 响应，`JSON.stringify` 后 postMessage `{type:"kcsapi", endpoint, request, response}`；限制 host `*.kancolle-server.com`/`ooi.moe`；P1 只转发不存储）
-6. 追加 ADJUST_SCRIPT（游戏画面缩放适配）
+6. 追加 ADJUST_SCRIPT（游戏画面缩放适配：隐藏 DMM 页面中非游戏的侧边栏/广告等元素——`.gamesResetStyle>:not(main){display:none}`，并把 1200px 游戏画面 `transform: scale` 铺满屏幕宽度。用户明确要求"登录后游戏控件部分全屏、网页其他部分不显示"，此补丁是实现手段；OOI 连接器页面结构不同，需配合任务 8 复制的 `game_custom.css`/`ooi.css` 资产替换，Spike/验收时逐连接器确认效果）
 
 `patchMainScript` 在 `ResourceCache` 检测到 main.js 响应时调用（按 URL path 判断：`/kcs2/js/main.js`）。
 
@@ -1278,7 +1278,43 @@ struct FloatingBallView: View {
 
 ZStack：`BrowserView`（全屏）→ `SubtitleBarView`（顶部，任务 13）→ `FloatingBallView` + 条件 `FloatingMenuView`。持有 `@State showMenu`、静音状态（菜单静音切换 → `webView.evaluateJavaScript(MUTE_SEND_*)`）。
 
-- [ ] **步骤 4：xcodebuild 验证 + 模拟器手测悬浮球拖动/菜单**
+- [ ] **步骤 3.5：进入游戏后锁定横屏（用户明确要求）**
+
+GameView `onAppear` 时锁定横屏，退出到入口页时恢复全方向：
+```swift
+// Game/Browser/OrientationLock.swift
+import UIKit
+
+enum OrientationLock {
+    static var current: UIInterfaceOrientationMask = .allButUpsideDown
+    static func lock(_ mask: UIInterfaceOrientationMask, rotateTo orientation: UIInterfaceOrientation? = nil) {
+        current = mask
+        if #available(iOS 16.0, *) {
+            let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+            scenes.forEach { scene in
+                let prefs = UIWindowScene.GeometryPreferences.iOS(interfaceOrientations: mask)
+                scene.requestGeometryUpdate(prefs) { _ in }
+            }
+        }
+        if let orientation {
+            UIDevice.current.setValue(orientation.rawValue, forKey: "orientation")
+        }
+    }
+}
+```
+并在 `GameApp.swift` 加 AppDelegate 桥接使锁定生效：
+```swift
+final class AppDelegate: NSObject, UIApplicationDelegate {
+    func application(_ application: UIApplication,
+                     supportedInterfaceOrientationsFor window: UIWindow?) -> UIInterfaceOrientationMask {
+        OrientationLock.current
+    }
+}
+// GameApp 内：@UIApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
+```
+GameView `onAppear` → `OrientationLock.lock(.landscape)`；`onDisappear` → `OrientationLock.lock(.allButUpsideDown)`。Info.plist 已声明三方向，无需改动。
+
+- [ ] **步骤 4：xcodebuild 验证 + 模拟器手测悬浮球拖动/菜单/横屏锁定**
 
 - [ ] **步骤 5：Commit** — `git commit -m "feat(game): 游戏画面容器与悬浮球/菜单覆盖层"`
 
