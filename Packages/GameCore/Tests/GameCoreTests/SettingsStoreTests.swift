@@ -29,11 +29,35 @@ final class SettingsStoreTests: XCTestCase {
         var s = SettingsStore(defaults: d)
         s.connector = .ooi
         s.silentStart = true
+        s.cacheEnabled = false
+        s.legacyRenderer = false
+        s.cursorMode = .mouse
+        s.keepScreenOn = true
+        s.subtitleEnabled = true
+        s.subtitleLocale = "tcn"
+        s.subtitleFontSize = 24
+        s.alterGadget = true
+        s.alterGadgetEndpoint = "https://cache.example.test/"
+        s.downloadRetry = false
         s.mitmEnabled = false
+        s.memoryWarnEnabled = false
+        s.memoryWarnThresholdMB = 768
         let s2 = SettingsStore(defaults: d)
         XCTAssertEqual(s2.connector, .ooi)
         XCTAssertTrue(s2.silentStart)
+        XCTAssertFalse(s2.cacheEnabled)
+        XCTAssertFalse(s2.legacyRenderer)
+        XCTAssertEqual(s2.cursorMode, .mouse)
+        XCTAssertTrue(s2.keepScreenOn)
+        XCTAssertTrue(s2.subtitleEnabled)
+        XCTAssertEqual(s2.subtitleLocale, "tcn")
+        XCTAssertEqual(s2.subtitleFontSize, 24)
+        XCTAssertTrue(s2.alterGadget)
+        XCTAssertEqual(s2.alterGadgetEndpoint, "https://cache.example.test/")
+        XCTAssertFalse(s2.downloadRetry)
         XCTAssertFalse(s2.mitmEnabled)
+        XCTAssertFalse(s2.memoryWarnEnabled)
+        XCTAssertEqual(s2.memoryWarnThresholdMB, 768)
     }
     func testBlockRulesPorted() {
         XCTAssertTrue(BrowserConstants.blockRules.contains("doubleclick.net"))

@@ -26,6 +26,21 @@ public typealias ResourceFetcher = (
     _ maximumBodyBytes: Int
 ) throws -> ResourceFetchResult
 
+/// A successfully served voice resource. The event is emitted for both disk
+/// cache hits and network responses so subtitle matching does not depend on
+/// the resource's storage source.
+public struct ResourceVoiceEvent: Equatable, Sendable {
+    public let url: URL
+    public let path: String
+    public let byteCount: Int
+
+    public init(url: URL, path: String, byteCount: Int) {
+        self.url = url
+        self.path = path
+        self.byteCount = max(0, byteCount)
+    }
+}
+
 /// Synchronous resource replacement/cache layer used by LocalProxyServer's
 /// synchronous `onGameResourceRequest` callback.
 ///
@@ -49,6 +64,7 @@ public final class ResourceCache: @unchecked Sendable {
     private let now: () -> Date
     private let maximumResponseBytes: Int
     private let fileManager: FileManager
+    private let onVoiceResource: (@Sendable (ResourceVoiceEvent) -> Void)?
 
     public init(
         cacheDir: URL,
@@ -58,6 +74,7 @@ public final class ResourceCache: @unchecked Sendable {
         scriptPatcher: ScriptPatcher? = ScriptPatcher(),
         maximumResponseBytes: Int = ResourceCache.defaultMaximumResponseBytes,
         now: @escaping () -> Date = Date.init,
+        onVoiceResource: (@Sendable (ResourceVoiceEvent) -> Void)? = nil,
         fetcher: @escaping ResourceFetcher = { request, limit in
             try ResourceCache.urlSessionFetch(
                 request,
@@ -74,6 +91,7 @@ public final class ResourceCache: @unchecked Sendable {
         self.now = now
         self.fetcher = fetcher
         self.fileManager = .default
+        self.onVoiceResource = onVoiceResource
         try? fileManager.createDirectory(
             at: self.cacheDirectory,
             withIntermediateDirectories: true
@@ -131,6 +149,12 @@ public final class ResourceCache: @unchecked Sendable {
                at: now()
            ),
            let body = boundedFileData(at: fileURL) {
+            emitVoiceEventIfNeeded(
+                originalURL: originalURL,
+                path: head.path,
+                bodyByteCount: body.count,
+                headers: []
+            )
             return cachedResponse(
                 body: body,
                 originalURL: originalURL,
@@ -173,6 +197,12 @@ public final class ResourceCache: @unchecked Sendable {
                     fetched.header("Cache-Control")
                 ) ?? existingRow.maxAgeSeconds
             )
+            emitVoiceEventIfNeeded(
+                originalURL: originalURL,
+                path: head.path,
+                bodyByteCount: body.count,
+                headers: fetched.headers
+            )
             return cachedResponse(
                 body: body,
                 originalURL: originalURL,
@@ -186,6 +216,14 @@ public final class ResourceCache: @unchecked Sendable {
             originalURL: originalURL,
             method: method
         )
+        if (200..<300).contains(fetched.statusCode) {
+            emitVoiceEventIfNeeded(
+                originalURL: originalURL,
+                path: head.path,
+                bodyByteCount: fetched.body.count,
+                headers: fetched.headers
+            )
+        }
         guard method == "GET",
               fetched.statusCode == 200,
               settings.cacheEnabled
@@ -215,6 +253,22 @@ public final class ResourceCache: @unchecked Sendable {
             // temporarily unwritable. A later request can try again.
         }
         return response
+    }
+
+    private func emitVoiceEventIfNeeded(
+        originalURL: URL,
+        path: String,
+        bodyByteCount: Int,
+        headers: [(String, String)]
+    ) {
+        guard let onVoiceResource,
+              Self.isVoiceResource(path: originalURL.path)
+        else { return }
+        let headerLength = headers.first {
+            $0.0.caseInsensitiveCompare("Content-Length") == .orderedSame
+        }.flatMap { Int($0.1) }
+        let size = bodyByteCount > 0 ? bodyByteCount : max(0, headerLength ?? 0)
+        onVoiceResource(.init(url: originalURL, path: path, byteCount: size))
     }
 
     // MARK: - Request mapping
@@ -486,6 +540,13 @@ public final class ResourceCache: @unchecked Sendable {
         case "mp4": return "video/mp4"
         default: return "application/octet-stream"
         }
+    }
+
+    private static func isVoiceResource(path: String) -> Bool {
+        let lowercased = path.lowercased()
+        return lowercased.hasSuffix(".mp3")
+            && (lowercased.contains("/kcs/sound/kc")
+                || lowercased.contains("/kcs2/resources/voice/titlecall_"))
     }
 
     // MARK: - Production native transport

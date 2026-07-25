@@ -172,6 +172,63 @@ final class ResourceCacheTests: XCTestCase {
         XCTAssertEqual(fetchCount, 0)
     }
 
+    func testVoiceEventFiresForNetworkAndFreshCacheHit() throws {
+        let events = LockedVoiceEvents()
+        let cache = ResourceCache(
+            cacheDir: temporaryDirectory.appendingPathComponent("cache"),
+            versionStore: store,
+            settings: SettingsStore(defaults: defaults),
+            assetReplacer: AssetReplacer(resourceDirectory: temporaryDirectory),
+            scriptPatcher: nil,
+            onVoiceResource: { events.append($0) },
+            fetcher: { _, _ in
+                .init(
+                    statusCode: 200,
+                    headers: [("Cache-Control", "max-age=600")],
+                    body: Data(repeating: 7, count: 321)
+                )
+            }
+        )
+        let voiceHead = head(
+            path: "/kcs/sound/kc123/456.mp3?ver=1"
+        )
+
+        XCTAssertNotNil(cache.response(for: voiceHead))
+        XCTAssertNotNil(cache.response(for: voiceHead))
+
+        XCTAssertEqual(events.values.count, 2)
+        XCTAssertEqual(events.values.map(\.byteCount), [321, 321])
+        XCTAssertTrue(events.values.allSatisfy {
+            $0.path.contains("/kcs/sound/kc123/456.mp3")
+        })
+    }
+
+    func testVoiceEventUsesContentLengthWhenResponseBodyIsEmpty() {
+        let events = LockedVoiceEvents()
+        let cache = ResourceCache(
+            cacheDir: temporaryDirectory.appendingPathComponent("cache"),
+            versionStore: store,
+            settings: SettingsStore(defaults: defaults),
+            assetReplacer: AssetReplacer(resourceDirectory: temporaryDirectory),
+            scriptPatcher: nil,
+            onVoiceResource: { events.append($0) },
+            fetcher: { _, _ in
+                .init(
+                    statusCode: 200,
+                    headers: [("Content-Length", "987")],
+                    body: Data()
+                )
+            }
+        )
+
+        _ = cache.response(for: head(
+            method: "HEAD",
+            path: "/kcs2/resources/voice/titlecall_1/2.mp3"
+        ))
+
+        XCTAssertEqual(events.values.first?.byteCount, 987)
+    }
+
     func testRevalidate304TouchesRowAndReturnsOldBody() throws {
         let requestHead = head()
         let url = try XCTUnwrap(URL(
@@ -454,5 +511,22 @@ final class ResourceCacheTests: XCTestCase {
             response?.headers.first?.1,
             "application/javascript"
         )
+    }
+}
+
+private final class LockedVoiceEvents: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage: [ResourceVoiceEvent] = []
+
+    var values: [ResourceVoiceEvent] {
+        lock.lock()
+        defer { lock.unlock() }
+        return storage
+    }
+
+    func append(_ event: ResourceVoiceEvent) {
+        lock.lock()
+        storage.append(event)
+        lock.unlock()
     }
 }

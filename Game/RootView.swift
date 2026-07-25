@@ -13,10 +13,19 @@ struct RootView: View {
     @State private var selectedConnector: BrowserConstants.Connector?
     @State private var presentedDestination: GameMenuDestination?
     @State private var alertMessage: String?
+    @StateObject private var subtitleCoordinator: SubtitleCoordinator
 
-    private let settings = SettingsStore()
+    private let settings: SettingsStore
     private let loginAutomation = LoginAutomation()
     private let screenshotSaver = ScreenshotSaver()
+
+    init() {
+        let settings = SettingsStore()
+        self.settings = settings
+        _subtitleCoordinator = StateObject(
+            wrappedValue: SubtitleCoordinator(settings: settings)
+        )
+    }
 
     var body: some View {
         Group {
@@ -36,6 +45,7 @@ struct RootView: View {
                         proxyPort: proxy.port,
                         settings: settings,
                         bridge: bridge,
+                        subtitleCoordinator: subtitleCoordinator,
                         onNavigationFinished: { webView in
                             loginAutomation.handlePageFinished(
                                 webView,
@@ -76,7 +86,7 @@ struct RootView: View {
         NavigationStack {
             Group {
                 if destination == .settings {
-                    CertificateInstallView()
+                    SettingsView(settings: settings)
                 } else {
                     ContentUnavailableView(
                         destination.rawValue,
@@ -156,7 +166,12 @@ struct RootView: View {
             let resourceCache = ResourceCache(
                 cacheDir: cacheRoot.appendingPathComponent("resources"),
                 versionStore: versions,
-                settings: settings
+                settings: settings,
+                onVoiceResource: { event in
+                    Task { @MainActor in
+                        subtitleCoordinator.receiveVoiceResource(event)
+                    }
+                }
             )
             proxy.onGameResourceRequest = { head in
                 resourceCache.response(for: head)
@@ -178,8 +193,12 @@ struct RootView: View {
                         alertMessage = error.localizedDescription
                     }
                 }
-            case .kcsapi(let endpoint, _, _):
+            case .kcsapi(let endpoint, _, let response):
                 DiagnosticsStore.shared.recordProxyLog("[API] \(endpoint)")
+                subtitleCoordinator.receiveAPIResponse(
+                    endpoint: endpoint,
+                    response: response
+                )
             case .apiError(let code):
                 DiagnosticsStore.shared.recordProxyLog("[APIERR] code=\(code)")
             case .log(let message):

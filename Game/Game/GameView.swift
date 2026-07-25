@@ -7,6 +7,7 @@ struct GameView: View {
     let proxyPort: UInt16
     let settings: SettingsStore
     let bridge: JSBridge
+    @ObservedObject var subtitleCoordinator: SubtitleCoordinator
     let onNavigationFinished: (WKWebView) -> Void
     let onOpenDestination: (GameMenuDestination) -> Void
     let onExit: () -> Void
@@ -23,6 +24,7 @@ struct GameView: View {
          proxyPort: UInt16,
          settings: SettingsStore,
          bridge: JSBridge,
+         subtitleCoordinator: SubtitleCoordinator,
          onNavigationFinished: @escaping (WKWebView) -> Void = { _ in },
          onOpenDestination: @escaping (GameMenuDestination) -> Void,
          onExit: @escaping () -> Void) {
@@ -30,6 +32,7 @@ struct GameView: View {
         self.proxyPort = proxyPort
         self.settings = settings
         self.bridge = bridge
+        self.subtitleCoordinator = subtitleCoordinator
         self.onNavigationFinished = onNavigationFinished
         self.onOpenDestination = onOpenDestination
         self.onExit = onExit
@@ -54,6 +57,15 @@ struct GameView: View {
                         onGameReady: gameDidBecomeReady,
                         onProcessTerminated: webContentProcessDidTerminate)
                 .ignoresSafeArea()
+
+            if settings.subtitleEnabled {
+                SubtitleBarView(
+                    match: subtitleCoordinator.currentMatch,
+                    fontSize: settings.subtitleFontSize
+                )
+                .frame(maxHeight: .infinity, alignment: .top)
+                .ignoresSafeArea(edges: .top)
+            }
 
             if isGameReady, showsMenu {
                 Color.black.opacity(0.001)
@@ -100,8 +112,12 @@ struct GameView: View {
         }
         .persistentSystemOverlays(.hidden)
         .statusBarHidden(isGameReady)
-        .onAppear(perform: startHealthMonitoring)
+        .onAppear {
+            UIApplication.shared.isIdleTimerDisabled = settings.keepScreenOn
+            startHealthMonitoring()
+        }
         .onDisappear {
+            UIApplication.shared.isIdleTimerDisabled = false
             memoryMonitor.stop()
             if isGameReady { OrientationLock.releaseLandscape() }
         }
