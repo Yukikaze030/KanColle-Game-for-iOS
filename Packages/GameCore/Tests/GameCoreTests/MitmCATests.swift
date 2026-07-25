@@ -38,6 +38,72 @@ final class MitmCATests: XCTestCase {
         XCTAssertEqual(attributes[kSecAttrKeySizeInBits] as? Int, 2_048)
     }
 
+    func testRootKeychainItemsHaveRequiredPersistenceAttributes() throws {
+        let service = makeService()
+        let rootDER = try MitmCA(keychainService: service).rootCertificateDER()
+
+        // The legacy macOS Keychain omits kSecAttrAccessible from returned
+        // attributes, so include the required value in the lookup itself.
+        // Data-protection behavior is rechecked in task 6B's signed App host.
+        var keyResult: CFTypeRef?
+        let keyStatus = SecItemCopyMatching([
+            kSecClass: kSecClassKey,
+            kSecAttrKeyClass: kSecAttrKeyClassPrivate,
+            kSecAttrApplicationTag: Data("\(service).ca".utf8),
+            kSecAttrAccessible: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
+            kSecReturnRef: true,
+            kSecMatchLimit: kSecMatchLimitOne
+        ] as CFDictionary, &keyResult)
+        XCTAssertEqual(keyStatus, errSecSuccess)
+        XCTAssertEqual(CFGetTypeID(try XCTUnwrap(keyResult)), SecKeyGetTypeID())
+
+        var metadataResult: CFTypeRef?
+        let metadataStatus = SecItemCopyMatching([
+            kSecClass: kSecClassGenericPassword,
+            kSecAttrService: service,
+            kSecAttrAccount: "root.certificate.der",
+            kSecAttrAccessible: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
+            kSecReturnData: true,
+            kSecMatchLimit: kSecMatchLimitOne
+        ] as CFDictionary, &metadataResult)
+        XCTAssertEqual(metadataStatus, errSecSuccess)
+        XCTAssertEqual(metadataResult as? Data, rootDER)
+
+        let rootCertificate = try XCTUnwrap(
+            SecCertificateCreateWithData(nil, rootDER as CFData)
+        )
+        let issuer = try XCTUnwrap(
+            SecCertificateCopyNormalizedIssuerSequence(rootCertificate)
+        )
+        var serialError: Unmanaged<CFError>?
+        let serial = try XCTUnwrap(
+            SecCertificateCopySerialNumberData(rootCertificate, &serialError)
+        )
+        XCTAssertNil(serialError?.takeRetainedValue())
+
+        // Certificate labels may be rewritten from the subject on macOS.
+        // Issuer + random serial is the stable certificate-class lookup key.
+        var certificateResult: CFTypeRef?
+        let certificateStatus = SecItemCopyMatching([
+            kSecClass: kSecClassCertificate,
+            kSecAttrIssuer: issuer,
+            kSecAttrSerialNumber: serial,
+            kSecReturnData: true,
+            kSecReturnRef: true,
+            kSecMatchLimit: kSecMatchLimitOne
+        ] as CFDictionary, &certificateResult)
+        XCTAssertEqual(certificateStatus, errSecSuccess)
+        let certificateItem = try XCTUnwrap(certificateResult as? [CFString: Any])
+        XCTAssertEqual(certificateItem[kSecValueData] as? Data, rootDER)
+        let storedCertificateValue = try XCTUnwrap(certificateItem[kSecValueRef])
+        XCTAssertEqual(
+            CFGetTypeID(storedCertificateValue as CFTypeRef),
+            SecCertificateGetTypeID()
+        )
+        let storedCertificate = storedCertificateValue as! SecCertificate
+        XCTAssertEqual(SecCertificateCopyData(storedCertificate) as Data, rootDER)
+    }
+
     func testIssueSiteCertificateHasValidChainAndSAN() throws {
         let ca = makeCA()
         let rootDER = try ca.rootCertificateDER()
