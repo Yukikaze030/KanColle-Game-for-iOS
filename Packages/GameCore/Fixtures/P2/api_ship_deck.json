@@ -1,0 +1,1 @@
+svdata={"api_result":1,"api_data":{"api_ship_data":[{"api_id":101,"api_ship_id":1,"api_lv":51,"api_nowhp":20,"api_maxhp":40,"api_cond":48,"api_slot":[501,-1],"api_onslot":[0,0],"api_slot_ex":0,"api_locked":1}],"api_deck_data":[{"api_id":1,"api_name":"出撃艦隊","api_mission":[0,0,0,0],"api_ship":[101,-1,-1,-1,-1,-1]}],"api_unknown_array":[1,2,3]}}
