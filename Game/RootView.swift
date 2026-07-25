@@ -4,14 +4,16 @@ import GameCore
 // TODO(任务12)：临时 RootView（任务 6 Spike 用，任务 12+ 会替换为正式导航结构）。
 struct RootView: View {
     enum ProxyState {
-        case starting, ready, failed
+        case idle, starting, ready, failed
     }
 
     @State private var proxy = LocalProxyServer()
     @State private var bridge = JSBridge()
-    @State private var proxyState: ProxyState = .starting
+    @State private var proxyState: ProxyState = .idle
     // TODO(任务6后清理)：Spike 日志面板显隐（默认展开）
     @State private var showLogPanel = true
+    // TODO(任务6后清理)：Spike 连接器选择（点击后才启动代理并加载对应 URL）
+    @State private var selectedConnector: BrowserConstants.Connector?
 
     var body: some View {
         Group {
@@ -20,7 +22,8 @@ struct RootView: View {
                 // 仅代理就绪（port != 0）才加载 BrowserView，避免静默直连
                 // 导致 Spike 得出虚假结论
                 ZStack {
-                    BrowserView(url: SettingsStore().connector.url, proxyPort: proxy.port,
+                    BrowserView(url: selectedConnector?.url ?? SettingsStore().connector.url,
+                                proxyPort: proxy.port,
                                 settings: SettingsStore(), bridge: bridge)
                         .ignoresSafeArea()
                 }
@@ -40,6 +43,23 @@ struct RootView: View {
                     .clipShape(Capsule())
                     .padding(8)
                 }
+            case .idle:
+                // TODO(任务6后清理)：Spike 连接器选择入口（任务 12+ 由正式设置页替代）
+                VStack(spacing: 16) {
+                    Text("选择连接器")
+                        .font(.headline)
+                    ForEach(BrowserConstants.Connector.allCases, id: \.self) { connector in
+                        Button(connector.rawValue) {
+                            selectConnector(connector)
+                        }
+                        .font(.system(size: 16, design: .monospaced))
+                        .padding(.horizontal, 24)
+                        .padding(.vertical, 12)
+                        .background(Color.black.opacity(0.7))
+                        .foregroundStyle(.white)
+                        .clipShape(Capsule())
+                    }
+                }
             case .starting:
                 ProgressView("启动代理…")
             case .failed:
@@ -47,14 +67,20 @@ struct RootView: View {
                     .foregroundStyle(.red)
             }
         }
-        .onAppear {
-            guard proxyState == .starting else { return }
-            installSpikeProbes()
-            try? proxy.start()
-            Task {
-                for _ in 0..<20 where proxy.port == 0 { try? await Task.sleep(nanoseconds: 100_000_000) }
-                proxyState = proxy.port != 0 ? .ready : .failed
-            }
+    }
+
+    // TODO(任务6后清理)：Spike 连接器选择——点击后才装探针、启动代理
+    private func selectConnector(_ connector: BrowserConstants.Connector) {
+        guard proxyState == .idle else { return }
+        selectedConnector = connector
+        var settings = SettingsStore()
+        settings.connector = connector
+        proxyState = .starting
+        installSpikeProbes()
+        try? proxy.start()
+        Task {
+            for _ in 0..<20 where proxy.port == 0 { try? await Task.sleep(nanoseconds: 100_000_000) }
+            proxyState = proxy.port != 0 ? .ready : .failed
         }
     }
 
@@ -63,12 +89,17 @@ struct RootView: View {
     private func installSpikeProbes() {
         let store = DiagnosticsStore.shared
         // 代理请求日志。回调在代理并发队列触发，跳主线程再写 @Observable 存储。
-        // 格式：[状态码] host/path；blocked 前缀 [B]（面板标红）；main.js 标注 [MAIN.JS]。
+        // 格式：[状态码] host/path（CONNECT 隧道为 [状态码] CONNECT host:port）；
+        // blocked 前缀 [B]（面板标红）；main.js 标注 [MAIN.JS]。
         proxy.onRequest = { entry in
             let status = entry.statusCode.map(String.init) ?? "---"
             var line = "[\(status)] "
-            if entry.path.contains("/kcs2/js/main.js") { line += "[MAIN.JS] " }
-            line += "\(entry.host)\(entry.path)"
+            if entry.path.hasPrefix("CONNECT:") {
+                line += "CONNECT \(entry.host):\(entry.path.dropFirst("CONNECT:".count))"
+            } else {
+                if entry.path.contains("/kcs2/js/main.js") { line += "[MAIN.JS] " }
+                line += "\(entry.host)\(entry.path)"
+            }
             if entry.blocked { line = "[B] " + line }
             Task { @MainActor in store.recordProxyLog(line) }
         }
