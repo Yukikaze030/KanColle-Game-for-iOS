@@ -15,7 +15,7 @@
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
-		DA89BC30F0624FE0BC8C1AE2 /* PBXFileSystemSynchronizedBuildFileExceptionSet */ = {
+		DA89BC30F0624FE0BC8C1AE2 /* Exceptions for "Game" folder in "Game" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				Info.plist,
@@ -28,7 +28,7 @@
 		CBA3EEF53013C6E7002CEBE4 /* Game */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
-				DA89BC30F0624FE0BC8C1AE2 /* PBXFileSystemSynchronizedBuildFileExceptionSet */,
+				DA89BC30F0624FE0BC8C1AE2 /* Exceptions for "Game" folder in "Game" target */,
 			);
 			path = Game;
 			sourceTree = "<group>";
@@ -335,20 +335,6 @@
 		};
 /* End XCBuildConfiguration section */
 
-/* Begin XCLocalSwiftPackageReference section */
-		9C204C01B6124B1BB242F312 /* XCLocalSwiftPackageReference "Packages/GameCore" */ = {
-			isa = XCLocalSwiftPackageReference;
-			relativePath = Packages/GameCore;
-		};
-/* End XCLocalSwiftPackageReference section */
-
-/* Begin XCSwiftPackageProductDependency section */
-		F2964644920D4224A490023E /* GameCore */ = {
-			isa = XCSwiftPackageProductDependency;
-			productName = GameCore;
-		};
-/* End XCSwiftPackageProductDependency section */
-
 /* Begin XCConfigurationList section */
 		CBA3EEEE3013C6E7002CEBE4 /* Build configuration list for PBXProject "Game" */ = {
 			isa = XCConfigurationList;
@@ -369,6 +355,20 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		9C204C01B6124B1BB242F312 /* XCLocalSwiftPackageReference "Packages/GameCore" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = Packages/GameCore;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		F2964644920D4224A490023E /* GameCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = GameCore;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = CBA3EEEB3013C6E7002CEBE4 /* Project object */;
 }
