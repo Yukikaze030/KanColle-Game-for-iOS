@@ -1,0 +1,88 @@
+body {
+	overflow-y: hidden;
+	background-color: #30384A;
+	color: #eeeeee;
+	margin: 0px;
+}
+
+a:link {
+  color: #FFC400;
+}
+
+input, textarea {
+    background-color : #424242;
+    border: 1px solid #888888;
+    color: #dddddd;
+}
+
+#ooi-page {
+  margin-top: 2px;
+  margin-bottom: 14px;
+}
+
+#ooi-logo img {
+  width: 80px;
+  height: 96px;
+}
+
+#ooi-headline h1 {
+  margin: 20px 0;
+  font-size: 42px;
+}
+
+#ooi-content {
+  margin-top: 15px;
+}
+
+#ooi-form p {
+  margin-left: 15px;
+}
+
+#ooi-announcement p {
+  text-indent: 2em;
+}
+
+#ooi-footer {
+  margin-top: 15px;
+}
+
+#ooi-game {
+    width: 1200,
+	height: 720,
+}
+
+#ooi-game #externalswf {
+  margin: 0px;
+  width: 1200px!important;
+  height: 720px!important;
+  border: 0px;
+}
+
+.statistics {
+  visibility: hidden;
+}
+
+#bg {
+position:fixed;
+top:0;
+left:0;
+height:100%;
+width:100%;
+overflow:hidden;
+background-color:#7987A8;
+background-size:cover;
+opacity:0.15;
+z-index:-1;
+}
+
+#ooi-page ~ div, #ooi-game a {
+   display: none;
+}
+
+#ooi-header, #ooi-footer {
+   display: none;
+}
+
+#ooi-page, #ooi-content, #ooi-game {
+   margin: 0; padding: 0;
+}
