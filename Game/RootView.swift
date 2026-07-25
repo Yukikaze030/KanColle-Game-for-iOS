@@ -117,6 +117,11 @@ struct RootView: View {
                 timers: gameStateModel.timers,
                 onClose: { presentedDestination = nil }
             )
+        } else if destination == .tools {
+            ToolsOverlayView(
+                timers: gameStateModel.timers,
+                onClose: { presentedDestination = nil }
+            )
         } else {
             NavigationStack {
                 Group {

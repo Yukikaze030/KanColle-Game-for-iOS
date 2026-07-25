@@ -278,7 +278,7 @@ public struct ScriptPatcher: Sendable {
         host=String(host||"").toLowerCase();
         endpoint=String(endpoint||"");
         response=stringify(response);
-        if(!(host==="ooi.moe"||host.endsWith(".kancolle-server.com")))return;
+        if(!(host==="ooi.moe"||host==="kancolle.moe"||host.endsWith(".kancolle-server.com")))return;
         if(endpoint.indexOf("kcsapi")<0||!response||response.indexOf("svdata=")<0)return;
         var signature=endpoint+"|"+response.length+"|"+response.slice(0,48)+"|"+response.slice(-48);
         if(recent.indexOf(signature)>=0)return;
