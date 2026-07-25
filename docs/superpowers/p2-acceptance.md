@@ -15,7 +15,8 @@
 - 大破无损管红色强警告；有损管橙色；入渠、未补给与士气文字状态。
 - 工具页显示四类计时，`TimelineView` 每秒刷新但不写数据库。
 - `UNUserNotificationCenter` 用户主动授权、四类独立开关、提前量和 64 条容量控制。
-- App Group 容器不可用时降级 Application Support，游戏启动不受阻。
+- WidgetKit 小组件读取 App Group SQLite，Small/Medium 显示最近 1/4 条计时。
+- App Group 容器不可用时 App 降级 Application Support，游戏启动不受阻。
 
 ## 生命周期与安全
 
@@ -27,8 +28,9 @@
 ## 自动验证
 
 ```text
-GameCore swift test: 188 tests, 0 failures
-iOS Simulator xcodebuild: BUILD SUCCEEDED
+GameCore swift test: 193 tests, 0 failures
+Game iOS Simulator xcodebuild: BUILD SUCCEEDED
+GameTimersWidget iOS Simulator xcodebuild: BUILD SUCCEEDED
 ```
 
 覆盖的专项套件包括：
