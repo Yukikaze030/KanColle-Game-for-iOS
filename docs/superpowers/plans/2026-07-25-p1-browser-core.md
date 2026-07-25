@@ -977,7 +977,7 @@ public final class MitmCA {
 **实现要点（执行者必须遵守）：**
 1. **密钥对**：`SecKeyGeneratePair`，attributes：`kSecAttrKeyType = kSecAttrKeyTypeRSA`、`kSecAttrKeySizeInBits = 2048`、`kSecAttrIsPermanent = true`、`kSecAttrApplicationTag = service + ".ca"`。
 2. **手工 DER 编码 X.509 v3 证书**（Security 框架无证书生成 API，必须自编码）：
-   - TBSCertificate：版本 v3、序列号（随机 16 字节）、签名算法 sha256WithRSAEncryption（OID 1.2.840.113549.1.1.11）、Issuer/Subject（CA 证书相同：CN="KanColle Game Local CA"；站点证书 Issuer=CA 的 Subject，Subject CN=host）、有效期（CA 10 年，站点 825 天——Apple 平台上限 398 天用于服务器证书的校验仅针对公开 CA，本地信任锚不受限，但保守取 825 天内）、SPKI（RSA 公钥 DER，从 `SecKeyCopyExternalRepresentation` 取出的 PKCS#1 包一层 BIT STRING+算法标识）
+   - TBSCertificate：版本 v3、序列号（随机 16 字节）、签名算法 sha256WithRSAEncryption（OID 1.2.840.113549.1.1.11）、Issuer/Subject（CA 证书相同：CN="KanColle Game Local CA"；站点证书 Issuer=CA 的 Subject，Subject CN=host）、有效期（CA 10 年；站点证书的 `notBefore` 提前 1 天、`notAfter` 为生成后 397 天，使总有效窗口不超过 Apple 的 398 天限制）、SPKI（RSA 公钥 DER，从 `SecKeyCopyExternalRepresentation` 取出的 PKCS#1 包一层 BIT STRING+算法标识）
    - 扩展（v3）：CA 证书 basicConstraints critical CA:TRUE pathlen:0、keyUsage critical keyCertSign+cRLSign、SKID；站点证书 basicConstraints CA:FALSE、keyUsage digitalSignature+keyEncipherment、EKU serverAuth、SAN dNSName=host
    - 签名：`SecKeyCreateSignature`（算法 `.rsaSignatureDigestPKCS1v15SHA256`——注意 Network/Security 对自编码 TBSCert 需用 `.rsaSignatureMessagePKCS1v15SHA256` 消息级变体，以对已编码 DigestInfo 的匹配为准，二选一以能验签通过者为准）
 3. **Keychain 持久化**：根证书 DER 以 `kSecClassCertificate` 存（kSecAttrLabel = service）；私钥随 SecKeyGeneratePair 的 isPermanent 自动入 Keychain。重进 App 用 `SecItemCopyMatching` 找回。
@@ -1028,7 +1028,7 @@ public final class MitmCA {
 
   **执行步骤（定稿）：**
   1. 先验证 SecureTransport 在 iPhoneOS SDK 可用：`ls /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS.sdk/System/Library/Frameworks/Security.framework/Headers/ | grep -i ssl`（预期有 SecureTransport.h）。**同时确认 swift 可用性**：SecureTransport 是 C API，Swift 可 import Security 后直接调用 `SSLCreateContext`、`SSLSetIOFuncs` 等（deprecated 警告可接受，加 `@available(iOS, deprecated: 13.0)` 抑制或 `#warning` 注释说明"个人侧载项目，SecureTransport 服务端 TLS 为唯一原生选项"）。
-  2. 新建 `Packages/GameCore/Sources/GameCore/MitmFrontend.swift`：BSD socket loopback 监听 → accept → `SSLNewContext(false)` 服务端上下文（`SSLSetCertificate` 传站点证书 identity 链）→ `SSLHandshake` → 此后 `SSLRead` 得到明文 HTTP 请求 → 交给与代理相同的 `onGameResourceRequest`/回源逻辑（回源用 `NWConnection(host:443, using: .tls)` 或同样 SecureTransport 客户端）→ `SSLWrite` 回响应。
+  2. 新建 `Packages/GameCore/Sources/GameCore/MitmFrontend.swift`：BSD socket loopback 监听 → accept → `SSLCreateContext(nil, .serverSide, .streamType)` 服务端上下文（`SSLSetCertificate` 传站点证书 identity 链）→ `SSLHandshake` → 此后 `SSLRead` 得到明文 HTTP 请求 → 交给与代理相同的 `onGameResourceRequest`/回源逻辑（回源用 `NWConnection(host:443, using: .tls)` 或同样 SecureTransport 客户端）→ `SSLWrite` 回响应。
   3. LocalProxyServer 的 `.connect(host, 443)` 命中 MITM 时：回复 200，然后把该 client 连接**桥接到 MitmFrontend**——不行，fd 同样拿不到。
 
   **★★ 最终定稿（简单、不再绕）：** proxyConfigurations 的 CONNECT 全部终结在 LocalProxyServer 的 NWConnection 里，fd 不可得 ⇒ **MITM 域名不经过 CONNECT**：LocalProxyServer 对 MITM 域名回复 `HTTP/1.1 200` 后，客户端开始在该连接上发 TLS ClientHello——此时**该 NWConnection 直接按「每连接一个 MitmSession」处理**：把 NWConnection 当纯字节泵，收到的字节喂给一个 **SecureTransport 服务端上下文（内存 BIO 模式）**：`SSLSetIOFuncs` 自定义读写回调——回调从 NWConnection receive 读、向 NWConnection send 写。**这是可行且干净的**（SecureTransport 支持自定义 IO，不碰 fd）：TLS 记录在 NWConnection 上透传，SSLRead/SSLWrite 产出/消费明文 HTTP。
