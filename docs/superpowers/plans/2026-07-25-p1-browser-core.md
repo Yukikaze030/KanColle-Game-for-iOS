@@ -1034,10 +1034,13 @@ public final class MitmCA {
   **★★ 最终定稿（简单、不再绕）：** proxyConfigurations 的 CONNECT 全部终结在 LocalProxyServer 的 NWConnection 里，fd 不可得 ⇒ **MITM 域名不经过 CONNECT**：LocalProxyServer 对 MITM 域名回复 `HTTP/1.1 200` 后，客户端开始在该连接上发 TLS ClientHello——此时**该 NWConnection 直接按「每连接一个 MitmSession」处理**：把 NWConnection 当纯字节泵，收到的字节喂给一个 **SecureTransport 服务端上下文（内存 BIO 模式）**：`SSLSetIOFuncs` 自定义读写回调——回调从 NWConnection receive 读、向 NWConnection send 写。**这是可行且干净的**（SecureTransport 支持自定义 IO，不碰 fd）：TLS 记录在 NWConnection 上透传，SSLRead/SSLWrite 产出/消费明文 HTTP。
 
   **照此实现 MitmSession.swift：**
+  - 显式 `import Security.SecureTransport`（仅 `import Security` 在当前 SDK 下看不到全部 SecureTransport 符号）
   - `SSLCreateContext(nil, .serverSide, .streamType)`（kSSLServerSide）→ `SSLSetIOFuncs(read, write)`（read 回调：从内部缓冲（NWConnection receive 喂入）拷贝；写回调：累积后 NWConnection.send）
   - `SSLSetCertificate(context, [identity, caCert] as CFArray)`
   - 驱动循环：NWConnection receive → 数据入队 → `SSLHandshake` 直到成功 → `SSLRead` 循环读明文请求头 → ProxyHTTPParser 解析 → onGameResourceRequest 或回源（上游 NWConnection TLS）→ `SSLWrite` 回传
-  - 自定义 IO 回调是同步语义，NWConnection receive 是异步——用 `DispatchSemaphore` + 队列缓冲桥接（这是本任务最难的点，仔细做）
+  - 自定义 IO 回调必须是**非阻塞内存 BIO**：read 缓冲无数据立即返回 `errSSLWouldBlock`，write 只写入输出缓冲；NWConnection 的异步 receive/send completion 再触发状态机。禁止用 `DispatchSemaphore` 等待网络，避免同队列死锁
+  - 每个 session 使用独立串行 state queue；所有 SecureTransport 调用与 BIO 缓冲访问只发生在该队列；NWConnection completion 只异步投递回 state queue
+  - 首版每个 TLS session 只处理一个 HTTP/1.1 事务并强制 `Connection: close`；拒绝 chunked 请求、Host 与外层 CONNECT host 不一致及超限请求，避免 SSRF 与错误 framing
 
 **步骤 2：CertificateInstallView.swift（证书安装引导）**
 
