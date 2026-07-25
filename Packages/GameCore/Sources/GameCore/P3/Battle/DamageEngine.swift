@@ -1,5 +1,59 @@
 import Foundation
 
+/// Converts the server's target number into one of the four battle fleet arrays.
+///
+/// Shelling target numbers use a global 0...11 space, while vector phases may
+/// provide an escort-only local 0...5 array. Keeping both representations here
+/// prevents phase decoders from growing scattered `6`/`12` offset arithmetic.
+public struct BattleTargetLayout: Equatable, Sendable {
+    public enum IndexSpace: Equatable, Sendable {
+        /// Global shelling indices 0...5.
+        case main
+        /// Global shelling indices 6...11.
+        case escort
+        /// Local vector indices 0...5 that all address the escort.
+        case escortLocal
+        /// Global shelling indices 0...11.
+        case combined
+    }
+
+    public let friendly: IndexSpace
+    public let enemy: IndexSpace
+
+    public init(friendly: IndexSpace, enemy: IndexSpace) {
+        self.friendly = friendly
+        self.enemy = enemy
+    }
+
+    public func resolve(rawIndex: Int, targetIsFriendly: Bool) -> BattleShipPosition? {
+        Self.resolve(rawIndex: rawIndex, in: targetIsFriendly ? friendly : enemy)
+    }
+
+    private static let fleetCapacity = 6
+
+    private static func resolve(rawIndex: Int, in indexSpace: IndexSpace) -> BattleShipPosition? {
+        guard rawIndex >= 0 else { return nil }
+        switch indexSpace {
+        case .main:
+            guard rawIndex < fleetCapacity else { return nil }
+            return .init(component: .main, index: rawIndex)
+        case .escort:
+            guard rawIndex >= fleetCapacity, rawIndex < fleetCapacity * 2 else { return nil }
+            return .init(component: .escort, index: rawIndex - fleetCapacity)
+        case .escortLocal:
+            guard rawIndex < fleetCapacity else { return nil }
+            return .init(component: .escort, index: rawIndex)
+        case .combined:
+            guard rawIndex < fleetCapacity * 2 else { return nil }
+            if rawIndex < fleetCapacity {
+                return .init(component: .main, index: rawIndex)
+            }
+            return .init(component: .escort, index: rawIndex - fleetCapacity)
+        }
+    }
+
+}
+
 public struct DamageApplication: Equatable, Sendable {
     public let applied: Bool
     public let warnings: [BattleParseWarning]

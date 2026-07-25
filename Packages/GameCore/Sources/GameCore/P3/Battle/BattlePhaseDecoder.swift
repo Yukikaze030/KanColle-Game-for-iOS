@@ -114,6 +114,220 @@ public struct BattlePhaseDecoder: Sendable {
         return phases
     }
 
+    /// Decodes ordered shelling-shaped phases. Target placement is selected once
+    /// per phase and delegated to `BattleTargetLayout`.
+    public func decodeShellingPhases(
+        from data: JSONValue,
+        endpoint: BattleEndpoint
+    ) -> [BattlePhaseResult] {
+        guard let object = data.objectValue else { return [] }
+        var phases: [BattlePhaseResult] = []
+
+        appendShelling(
+            object["api_opening_taisen"],
+            kind: .openingAntiSubmarine,
+            field: "api_opening_taisen",
+            layout: shellingLayout(for: "api_opening_taisen", endpoint: endpoint, data: object),
+            to: &phases
+        )
+        for number in 1...4 {
+            let field = "api_hougeki\(number)"
+            appendShelling(
+                object[field],
+                kind: .shelling,
+                field: field,
+                layout: shellingLayout(for: field, endpoint: endpoint, data: object),
+                to: &phases
+            )
+        }
+        if let friendly = object["api_friendly_battle"]?.objectValue {
+            appendShelling(
+                friendly["api_hougeki"],
+                kind: .friendlyFleet,
+                field: "api_friendly_battle.api_hougeki",
+                layout: nightLayout(endpoint: endpoint, data: object),
+                to: &phases
+            )
+        }
+        appendShelling(
+            object["api_hougeki"],
+            kind: .night,
+            field: "api_hougeki",
+            layout: nightLayout(endpoint: endpoint, data: object),
+            to: &phases
+        )
+        return phases
+    }
+
+    private func appendShelling(
+        _ value: JSONValue?,
+        kind: BattlePhaseKind,
+        field: String,
+        layout: BattleTargetLayout,
+        to phases: inout [BattlePhaseResult]
+    ) {
+        guard let object = value?.objectValue else { return }
+        var warnings: [BattleParseWarning] = []
+        let events = shellingEvents(object, field: field, layout: layout, warnings: &warnings)
+        if !events.isEmpty || !warnings.isEmpty {
+            phases.append(.init(kind: kind, events: events, warnings: warnings))
+        }
+    }
+
+    private func shellingEvents(
+        _ object: [String: JSONValue],
+        field: String,
+        layout: BattleTargetLayout,
+        warnings: inout [BattleParseWarning]
+    ) -> [DamageEvent] {
+        guard let targets = object["api_df_list"]?.arrayValue else { return [] }
+        guard let damageRows = object["api_damage"]?.arrayValue else {
+            warnings.append(.init(field: field, message: "missing api_damage"))
+            return []
+        }
+        guard let attackerFlags = object["api_at_eflag"]?.arrayValue else {
+            warnings.append(.init(field: field, message: "missing api_at_eflag"))
+            return []
+        }
+
+        // Read both generations of attack-kind field. Its value is descriptive
+        // only and must never scale or suppress damage.
+        let attackKinds = object["api_at_type"]?.arrayValue ?? object["api_sp_list"]?.arrayValue
+        var events: [DamageEvent] = []
+        for attackIndex in targets.indices {
+            guard attackIndex < attackerFlags.count,
+                  let attackerIsEnemy = attackerFlag(attackerFlags[attackIndex]) else {
+                warnings.append(.init(field: field, message: "invalid api_at_eflag at attack \(attackIndex)"))
+                continue
+            }
+            if let attackKinds, attackIndex >= attackKinds.count {
+                warnings.append(.init(field: field, message: "missing attack kind at attack \(attackIndex)"))
+            }
+            guard attackIndex < damageRows.count,
+                  let targetRow = targets[attackIndex].arrayValue,
+                  let damageRow = damageRows[attackIndex].arrayValue else {
+                warnings.append(.init(field: field, message: "invalid target/damage row at attack \(attackIndex)"))
+                continue
+            }
+            if targetRow.count != damageRow.count {
+                warnings.append(.init(field: field, message: "target/damage hit counts differ at attack \(attackIndex)"))
+            }
+
+            let targetIsFriendly = attackerIsEnemy
+            for hitIndex in 0..<min(targetRow.count, damageRow.count) {
+                guard let rawTarget = targetRow[hitIndex].intValue else {
+                    warnings.append(.init(field: field, message: "invalid target at attack \(attackIndex) hit \(hitIndex)"))
+                    continue
+                }
+                guard let target = resolveShellingTarget(
+                    rawTarget,
+                    targetIsFriendly: targetIsFriendly,
+                    layout: layout
+                ) else {
+                    warnings.append(.init(
+                        field: field,
+                        message: "target out of layout: \(rawTarget) at attack \(attackIndex) hit \(hitIndex)"
+                    ))
+                    continue
+                }
+                guard let damage = battleDamage(damageRow[hitIndex]) else {
+                    warnings.append(.init(field: field, message: "invalid damage at attack \(attackIndex) hit \(hitIndex)"))
+                    continue
+                }
+                guard damage > 0 else { continue }
+                events.append(.init(target: target, targetIsFriendly: targetIsFriendly, damage: damage))
+            }
+        }
+        if targets.count != damageRows.count || targets.count != attackerFlags.count {
+            warnings.append(.init(field: field, message: "attack array lengths differ"))
+        }
+        return events
+    }
+
+    private func attackerFlag(_ value: JSONValue) -> Bool? {
+        guard let flag = value.intValue, flag == 0 || flag == 1 else { return nil }
+        return flag == 1
+    }
+
+    private func resolveShellingTarget(
+        _ rawIndex: Int,
+        targetIsFriendly: Bool,
+        layout: BattleTargetLayout
+    ) -> BattleShipPosition? {
+        layout.resolve(rawIndex: rawIndex, targetIsFriendly: targetIsFriendly)
+    }
+
+    private func shellingLayout(
+        for field: String,
+        endpoint: BattleEndpoint,
+        data: [String: JSONValue]
+    ) -> BattleTargetLayout {
+        let hasFriendlyEscort = data["api_f_nowhps_combined"] != nil
+        let hasEnemyEscort = data["api_e_nowhps_combined"] != nil
+        if field == "api_opening_taisen" || field == "api_hougeki4" {
+            return .init(
+                friendly: hasFriendlyEscort ? .combined : .main,
+                enemy: hasEnemyEscort ? .combined : .main
+            )
+        }
+
+        let number = Int(field.last.map(String.init) ?? "") ?? 0
+        switch endpoint.known {
+        case .combinedBattle:
+            return .init(
+                friendly: number == 1 ? .escort : .main,
+                enemy: .main
+            )
+        case .combinedWater:
+            return .init(
+                friendly: number == 3 ? .escort : .main,
+                enemy: .main
+            )
+        case .eachBattle:
+            return pairedCombinedLayout(number: number, order: [.main, .escort, .combined])
+        case .eachWater:
+            return pairedCombinedLayout(number: number, order: [.main, .combined, .escort])
+        case .enemyCombinedBattle:
+            let enemy: BattleTargetLayout.IndexSpace = [
+                1: .escort, 2: .main, 3: .combined
+            ][number] ?? .combined
+            return .init(friendly: .main, enemy: enemy)
+        default:
+            return .init(
+                friendly: hasFriendlyEscort ? .combined : .main,
+                enemy: hasEnemyEscort ? .combined : .main
+            )
+        }
+    }
+
+    private func pairedCombinedLayout(
+        number: Int,
+        order: [BattleTargetLayout.IndexSpace]
+    ) -> BattleTargetLayout {
+        let indexSpace = order.indices.contains(number - 1) ? order[number - 1] : .combined
+        return .init(friendly: indexSpace, enemy: indexSpace)
+    }
+
+    private func nightLayout(
+        endpoint: BattleEndpoint,
+        data: [String: JSONValue]
+    ) -> BattleTargetLayout {
+        let hasFriendlyEscort = data["api_f_nowhps_combined"] != nil
+        let hasEnemyEscort = data["api_e_nowhps_combined"] != nil
+        guard endpoint.known == .enemyCombinedMidnight,
+              let activeDeck = data["api_active_deck"]?.arrayValue else {
+            return .init(
+                friendly: hasFriendlyEscort ? .combined : .main,
+                enemy: hasEnemyEscort ? .combined : .main
+            )
+        }
+        let friendly: BattleTargetLayout.IndexSpace =
+            activeDeck.first?.intValue == 2 ? .escort : .main
+        let enemy: BattleTargetLayout.IndexSpace =
+            activeDeck.dropFirst().first?.intValue == 2 ? .escort : .main
+        return .init(friendly: friendly, enemy: enemy)
+    }
+
     private func appendAir(
         _ value: JSONValue?,
         kind: BattlePhaseKind,
@@ -184,20 +398,15 @@ public struct BattlePhaseDecoder: Sendable {
                 return nil
             }
             guard damage > 0 else { return nil }
-            let component: BattleFleetComponent
-            let index: Int
-            if combinedOnly {
-                component = .escort
-                index = offset
-            } else if offset >= 6 {
-                component = .escort
-                index = offset - 6
-            } else {
-                component = .main
-                index = offset
+            let indexSpace: BattleTargetLayout.IndexSpace = combinedOnly ? .escortLocal : .combined
+            guard let position = BattleTargetLayout(
+                friendly: indexSpace, enemy: indexSpace
+            ).resolve(rawIndex: offset, targetIsFriendly: friendly) else {
+                warnings.append(.init(field: field, message: "target out of layout at index \(offset)"))
+                return nil
             }
             return DamageEvent(
-                target: .init(component: component, index: index),
+                target: position,
                 targetIsFriendly: friendly,
                 damage: damage
             )
