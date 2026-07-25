@@ -32,7 +32,8 @@ public enum BrowserConstants {
         }
     }
 
-    // MARK: - User agents (iOS-specific, matching GotoBrowser's desktop/mobile UAs)
+    // MARK: - User agents (from GotoBrowser's WebViewManager.java:57-59:
+    // USER_AGENT / USER_AGENT_IOS / USER_AGENT_MOBILE)
     public static let userAgentDesktop = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36"
     public static let userAgentIOSCanvas = "Mozilla/5.0 (Macintosh; Intel Mac OS X 15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Safari/605.1.15"
     public static let userAgentMobile = "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Mobile Safari/537.36"
@@ -47,8 +48,9 @@ public enum BrowserConstants {
     // MARK: - Gadget server
     public static let gadgetOsapiIfr = "osapi.dmm.com/gadgets/ifr?aid=854854"
     public static let initGameFrame = "artemis.games.dmm.com/member/pc/init-game-frame/kancolle"
-    public static let gadgetHTTPHost = "w00g.kancolle-server.com"
     public static let gadgetHTTPURL = "http://w00g.kancolle-server.com/"
+    /// Derived from `gadgetHTTPURL` (single source of truth for the host name).
+    public static let gadgetHTTPHost = URL(string: gadgetHTTPURL)!.host!
     public static let gadgetHTTPSURL = "https://w00g.kancolle-server.com/"
     public static let defaultAlterGadgetURL = "https://kcwiki.github.io/cache/"
 
@@ -75,10 +77,11 @@ public enum BrowserConstants {
     /// ADD_VIEWPORT_META
     public static let viewportMetaScript = #"var metaTag=document.createElement('meta');metaTag.name='viewport',metaTag.content='width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=0',document.getElementsByTagName('head')[0].appendChild(metaTag);"#
 
-    /// MUTE_SEND_DMM (%d placeholder: 1 = mute, 0 = unmute)
+    /// MUTE_SEND_DMM. Placeholder: `%d` — format via `String(format:)` with an `Int`
+    /// (1 = mute, 0 = unmute), e.g. `String(format: muteSendDMM, muted ? 1 : 0)`.
     public static let muteSendDMM = #"(function(){var msg={sound:%d};var origin="*";var game_frame=document.getElementById("game_frame");if(game_frame!=null){game_frame.contentWindow.postMessage(msg,origin)};return "done"})()"#
 
-    /// MUTE_SEND_OOI (%d placeholder)
+    /// MUTE_SEND_OOI. Placeholder: `%d` — same as `muteSendDMM` (`String(format:)` + `Int`).
     public static let muteSendOOI = #"(function(){var msg={sound:%d};var origin="*";var game_frame=document.getElementById("externalswf");if(game_frame!=null){game_frame.contentWindow.postMessage(msg,origin)};return "done"})()"#
 
     /// MUTE_LISTEN (leading newline preserved from source)
@@ -97,13 +100,19 @@ public enum BrowserConstants {
     /// ADJUST_SCRIPT
     public static let adjustScript = #"(()=>{const t="data-game-resize-init",e=1200;if(document.documentElement.hasAttribute(t))return;document.documentElement.setAttribute(t,"true");const n=()=>{const t=document.querySelector(".gamesResetStyle");if(!t)return!1;const n=document.createElement("style");n.textContent=".gamesResetStyle>main{margin:0!important;padding:0!important}.gamesResetStyle>:not(main){display:none!important}#game_frame{transform-origin:top left}",document.head.appendChild(n);const i=document.getElementById("game_frame");if(!i)return!1;const o=()=>{console.log("innerWidth:",window.innerWidth),i.style.transform=`scale(${window.innerWidth/e})`};let r=0;const a=()=>{cancelAnimationFrame(r),r=requestAnimationFrame(o)};return window.addEventListener("resize",a,{passive:!0}),o(),!0},i=new MutationObserver((()=>{n()&&i.disconnect()}));i.observe(document.body,{childList:!0,subtree:!0}),n()})();"#
 
-    /// AUTOCOMPLETE_DMM (%s placeholders: login id, password)
-    public static let autocompleteDMM = #"function v(e,t){let o=Object.getOwnPropertyDescriptor(e,"value").set,s=Object.getPrototypeOf(e),l=Object.getOwnPropertyDescriptor(s,"value").set;o&&o!==l?l.call(e,t):o.call(e,t)}if(document.forms.loginForm!=undefined){v(document.forms.loginForm.elements.login_id,"%s"),document.forms.loginForm.elements.login_id.dispatchEvent(new Event("input",{bubbles:!0})),v(document.forms.loginForm.elements.password,"%s"),document.forms.loginForm.elements.password.dispatchEvent(new Event("input",{bubbles:!0}));}"#
+    /// AUTOCOMPLETE_DMM. Placeholders: two `%@` (login id, password) — format via
+    /// `String(format:)` with Swift `String` arguments.
+    /// Deviation from the Android source: the Java original uses `%s`, but passing a
+    /// Swift `String` to `%s` through `String(format:)` is a CVarArg type mismatch that
+    /// crashes (SIGSEGV) at runtime; `%@` is the correct object placeholder on Apple platforms.
+    public static let autocompleteDMM = #"function v(e,t){let o=Object.getOwnPropertyDescriptor(e,"value").set,s=Object.getPrototypeOf(e),l=Object.getOwnPropertyDescriptor(s,"value").set;o&&o!==l?l.call(e,t):o.call(e,t)}if(document.forms.loginForm!=undefined){v(document.forms.loginForm.elements.login_id,"%@"),document.forms.loginForm.elements.login_id.dispatchEvent(new Event("input",{bubbles:!0})),v(document.forms.loginForm.elements.password,"%@"),document.forms.loginForm.elements.password.dispatchEvent(new Event("input",{bubbles:!0}));}"#
 
-    /// AUTOCOMPLETE_OOI (%s placeholders: login id, password)
-    public static let autocompleteOOI = #"$('input[name="login_id"]').val("%s");$('input[name="password"]').val("%s");"#
+    /// AUTOCOMPLETE_OOI. Placeholders: two `%@` (login id, password) — same `%s`→`%@`
+    /// deviation from the Android source as `autocompleteDMM` (see above).
+    public static let autocompleteOOI = #"$('input[name="login_id"]').val("%@");$('input[name="password"]').val("%@");"#
 
-    /// DMM_COOKIE ({date} placeholder: expiry date string)
+    /// DMM_COOKIE. Placeholder: `{date}` (NOT a printf token) — substitute via
+    /// `dmmCookieScript.replacingOccurrences(of: "{date}", with: expiryDateString)`.
     public static let dmmCookieScript = #"document.cookie='ckcy_remedied_check="ec_mrnhbtk";expires={date};path=/;domain=.dmm.com';document.cookie='ckcy=1;path=/;domain=.dmm.com;expires={date};path=/;domain=.dmm.com';"#
 
     // MARK: - iOS-specific additions

@@ -91,6 +91,7 @@ public struct SettingsStore {
         set { defaults.set(newValue, forKey: "pref_mem_warn_mb") }
     }
 
+    /// Setting `nil` removes the key (UserDefaults.removeObject semantics).
     public var latestURL: String? {
         get { defaults.string(forKey: "pref_latest_url") }
         set { defaults.set(newValue, forKey: "pref_latest_url") }
