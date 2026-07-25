@@ -13,6 +13,10 @@ struct RootView: View {
     @State private var selectedConnector: BrowserConstants.Connector?
     @State private var presentedDestination: GameMenuDestination?
     @State private var alertMessage: String?
+    @State private var showsCertificateFallbackPrompt = false
+    @State private var showsCertificateInstall = false
+    @State private var screenshotSaveInFlight = false
+    @State private var lastScreenshotSaveAt: Date?
     @StateObject private var subtitleCoordinator: SubtitleCoordinator
 
     private let settings: SettingsStore
@@ -31,8 +35,8 @@ struct RootView: View {
         Group {
             switch phase {
             case .entrance:
-                EntranceView(settings: settings) { connector in
-                    startGame(using: connector)
+                EntranceView(settings: settings) { connector, credentials in
+                    startGame(using: connector, credentials: credentials)
                 } onOpenSettings: {
                     presentedDestination = .settings
                 }
@@ -71,6 +75,19 @@ struct RootView: View {
         .sheet(item: $presentedDestination) { destination in
             destinationSheet(destination)
         }
+        .sheet(isPresented: $showsCertificateInstall) {
+            NavigationStack {
+                CertificateInstallView()
+            }
+        }
+        .alert("未启用证书完全信任", isPresented: $showsCertificateFallbackPrompt) {
+            Button("安装证书") {
+                showsCertificateInstall = true
+            }
+            Button("继续盲隧道", role: .cancel) {}
+        } message: {
+            Text("本次启动已禁用 HTTPS 解密并回退为普通盲隧道，游戏仍可加载，但资源缓存、API 解析及补丁功能暂不可用。安装并完全信任根证书后，下次启动会自动恢复。")
+        }
         .alert("提示", isPresented: Binding(
             get: { alertMessage != nil },
             set: { if !$0 { alertMessage = nil } }
@@ -104,29 +121,60 @@ struct RootView: View {
         }
     }
 
-    private func startGame(using connector: BrowserConstants.Connector) {
+    private func startGame(
+        using connector: BrowserConstants.Connector,
+        credentials: KeychainStore.Credentials?
+    ) {
         guard phase == .entrance || phase == .failed else { return }
         selectedConnector = connector
+        loginAutomation.beginSession(credentials: credentials)
         var updatedSettings = settings
         updatedSettings.connector = connector
-        proxy.mitmCA = settings.mitmEnabled ? MitmCA() : nil
-        configureProxyHandlers(settings: settings)
-        configureBridge()
         phase = .starting
 
-        do {
-            try proxy.start()
-        } catch {
-            alertMessage = error.localizedDescription
-            phase = .failed
+        Task {
+            await configureMITMForThisLaunch()
+            configureProxyHandlers(settings: settings)
+            configureBridge()
+
+            do {
+                try proxy.start { result in
+                    Task { @MainActor in
+                        switch result {
+                        case .success:
+                            phase = .game
+                        case .failure(let error):
+                            alertMessage = error.localizedDescription
+                            phase = .failed
+                        }
+                    }
+                }
+            } catch {
+                alertMessage = error.localizedDescription
+                phase = .failed
+            }
+        }
+    }
+
+    @MainActor
+    private func configureMITMForThisLaunch() async {
+        guard settings.mitmEnabled else {
+            proxy.mitmCA = nil
             return
         }
 
-        Task {
-            for _ in 0..<30 where proxy.port == 0 {
-                try? await Task.sleep(for: .milliseconds(100))
-            }
-            phase = proxy.port == 0 ? .failed : .game
+        let certificateAuthority = MitmCA()
+        let trustModel = CertificateTrustModel(
+            certificateAuthority: certificateAuthority
+        )
+        await trustModel.recheckTrust()
+        if trustModel.state == .trusted {
+            proxy.mitmCA = certificateAuthority
+        } else {
+            // Never begin a TLS interception handshake with an untrusted root.
+            // The whole launch uses a blind CONNECT tunnel instead.
+            proxy.mitmCA = nil
+            showsCertificateFallbackPrompt = true
         }
     }
 
@@ -134,6 +182,9 @@ struct RootView: View {
         proxy.stop()
         proxy.onRequest = nil
         proxy.onGameResourceRequest = nil
+        loginAutomation.endSession()
+        screenshotSaveInFlight = false
+        lastScreenshotSaveAt = nil
         selectedConnector = nil
         phase = .entrance
         OrientationLock.releaseLandscape()
@@ -185,7 +236,20 @@ struct RootView: View {
         bridge.onEvent = { event in
             switch event {
             case .capture(let dataURL):
-                Task {
+                let now = Date()
+                guard !screenshotSaveInFlight,
+                      lastScreenshotSaveAt.map({
+                          now.timeIntervalSince($0) >= 2
+                      }) ?? true else {
+                    DiagnosticsStore.shared.recordProxyLog(
+                        "[CAPTURE] 忽略重复或过快的截图请求"
+                    )
+                    return
+                }
+                screenshotSaveInFlight = true
+                lastScreenshotSaveAt = now
+                Task { @MainActor in
+                    defer { screenshotSaveInFlight = false }
                     do {
                         _ = try await screenshotSaver.save(dataURL: dataURL)
                         alertMessage = "截图已保存到照片。"

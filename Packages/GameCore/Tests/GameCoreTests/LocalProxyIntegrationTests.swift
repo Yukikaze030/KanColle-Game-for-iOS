@@ -546,6 +546,42 @@ final class LocalProxyIntegrationTests: XCTestCase {
 
     // MARK: - Tests
 
+    func testStopClearsPortAndRestartCompletionUsesNewGeneration() throws {
+        let proxy = LocalProxyServer()
+        self.proxy = proxy
+        let firstReady = expectation(description: "first listener ready")
+        var firstPort: UInt16 = 0
+        try proxy.start { result in
+            if case .success(let port) = result {
+                firstPort = port
+            }
+            firstReady.fulfill()
+        }
+        wait(for: [firstReady], timeout: 5)
+        XCTAssertNotEqual(firstPort, 0)
+        XCTAssertEqual(proxy.port, firstPort)
+
+        proxy.stop()
+        XCTAssertEqual(proxy.port, 0, "stop 必须同步清除可观察端口")
+
+        let secondReady = expectation(description: "second listener ready")
+        var secondPort: UInt16 = 0
+        try proxy.start { result in
+            if case .success(let port) = result {
+                secondPort = port
+            }
+            secondReady.fulfill()
+        }
+        XCTAssertEqual(
+            proxy.port,
+            0,
+            "新一轮 ready 前不能暴露上一轮已经失效的端口"
+        )
+        wait(for: [secondReady], timeout: 5)
+        XCTAssertNotEqual(secondPort, 0)
+        XCTAssertEqual(proxy.port, secondPort)
+    }
+
     func testMitmConnectDecryptsAndUsesLocalResourceHandler() throws {
         let host = "w00g.kancolle-server.com"
         let (certificateAuthority, rootCertificate) = try makeCA()

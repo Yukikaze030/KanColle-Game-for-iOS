@@ -51,7 +51,15 @@ public struct ResourceResponse: Sendable {
 /// P1 简化：对上游一律 Connection: close（每请求一连接），不做 keep-alive；
 /// ProxyHTTPParser 单次使用（解析出头部即丢弃）。
 public final class LocalProxyServer: @unchecked Sendable {
-    public private(set) var port: UInt16 = 0
+    /// 当前这一轮 listener 已经进入 `.ready` 后的端口。
+    ///
+    /// 读取保留为同步 API 以兼容现有调用方，但由锁保护；`start(completion:)`
+    /// 是新代码等待本轮启动结果的可靠入口。
+    public var port: UInt16 {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        return currentPort
+    }
     public var onRequest: ((ProxyRequestLog) -> Void)?
     public var onGameResourceRequest: ((ProxyHTTPParser.HTTPRequestHead) -> ResourceResponse?)?
     public var isInspectableHost: ((String, Int) -> Bool) = { host, port in
@@ -63,7 +71,12 @@ public final class LocalProxyServer: @unchecked Sendable {
         LocalProxyServer.isGameServerHost(host)
     }
 
+    private let stateLock = NSLock()
+    private var currentPort: UInt16 = 0
     private var listener: NWListener?
+    private var listenerGeneration: UInt64 = 0
+    private var startupCompletions:
+        [UInt64: (Result<UInt16, Error>) -> Void] = [:]
     private let queue = DispatchQueue(label: "localproxy", attributes: .concurrent)
     private let registryLock = NSLock()
     private var active: [ObjectIdentifier: NWConnection] = [:]
@@ -87,20 +100,50 @@ public final class LocalProxyServer: @unchecked Sendable {
     public init() {}
 
     public func start() throws {
+        try start(completion: nil)
+    }
+
+    /// 启动一轮新的 listener。调用 completion 时，结果只可能属于本次启动；
+    /// 上一轮 listener 的延迟状态回调会被 generation 丢弃。
+    public func start(
+        completion: ((Result<UInt16, Error>) -> Void)?
+    ) throws {
+        stop()
         let params = NWParameters.tcp
         params.requiredInterfaceType = .loopback
         let l = try NWListener(using: params, on: .any)
+
+        stateLock.lock()
+        listenerGeneration &+= 1
+        let generation = listenerGeneration
+        currentPort = 0
+        listener = l
+        if let completion {
+            startupCompletions[generation] = completion
+        }
+        stateLock.unlock()
+
         l.newConnectionHandler = { [weak self] conn in self?.handle(conn) }
         l.stateUpdateHandler = { [weak self] state in
-            if case .ready = state { self?.port = l.port?.rawValue ?? 0 }
+            self?.handleListenerState(
+                state,
+                listener: l,
+                generation: generation
+            )
         }
         l.start(queue: queue)
-        listener = l
     }
 
     public func stop() {
-        listener?.cancel()
+        stateLock.lock()
+        let listenerToCancel = listener
         listener = nil
+        currentPort = 0
+        listenerGeneration &+= 1
+        startupCompletions.removeAll()
+        stateLock.unlock()
+
+        listenerToCancel?.cancel()
         registryLock.lock()
         let conns = Array(active.values)
         let sessions = Array(activeMitmSessions.values)
@@ -110,6 +153,50 @@ public final class LocalProxyServer: @unchecked Sendable {
         // callback removes them from the registry.
         sessions.forEach { $0.cancel() }
         conns.forEach { $0.cancel() }
+    }
+
+    private func handleListenerState(
+        _ state: NWListener.State,
+        listener candidate: NWListener,
+        generation: UInt64
+    ) {
+        var completion: ((Result<UInt16, Error>) -> Void)?
+        var result: Result<UInt16, Error>?
+
+        stateLock.lock()
+        guard generation == listenerGeneration,
+              listener === candidate
+        else {
+            stateLock.unlock()
+            return
+        }
+        switch state {
+        case .ready:
+            let readyPort = candidate.port?.rawValue ?? 0
+            currentPort = readyPort
+            completion = startupCompletions.removeValue(forKey: generation)
+            if readyPort != 0 {
+                result = .success(readyPort)
+            } else {
+                result = .failure(ProxyStartError.missingReadyPort)
+            }
+        case .failed(let error):
+            currentPort = 0
+            listener = nil
+            completion = startupCompletions.removeValue(forKey: generation)
+            result = .failure(error)
+        default:
+            break
+        }
+        stateLock.unlock()
+
+        if let completion, let result {
+            completion(result)
+        }
+    }
+
+    private enum ProxyStartError: Error {
+        case missingReadyPort
     }
 
     // MARK: - Connection registry（stop() 时统一 cancel，避免泄漏）

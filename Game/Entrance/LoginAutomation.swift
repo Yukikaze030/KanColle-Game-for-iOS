@@ -29,6 +29,7 @@ final class LoginAutomation {
     private let settings: SettingsStore
     private let keychain: KeychainStore
     private var reloadedForGoogle = false
+    private var sessionCredentials: KeychainStore.Credentials?
 
     var onError: ((AutomationError) -> Void)?
 
@@ -37,35 +38,43 @@ final class LoginAutomation {
         self.keychain = keychain ?? KeychainStore()
     }
 
+    func beginSession(credentials: KeychainStore.Credentials?) {
+        sessionCredentials = credentials
+    }
+
+    func endSession() {
+        sessionCredentials = nil
+        reloadedForGoogle = false
+    }
+
     func handlePageFinished(_ webView: WKWebView,
                             connector: BrowserConstants.Connector? = nil) {
         guard let url = webView.url else { return }
         let selectedConnector = connector ?? settings.connector
-        let address = url.absoluteString.lowercased()
 
-        if address.contains("accounts.google.com") {
+        if Self.isGoogleLoginURL(url) {
             useGoogleUserAgentIfNeeded(webView)
             return
         }
         reloadedForGoogle = false
         restorePreferredUserAgent(webView)
 
-        if BrowserConstants.dmmForeignMarkers.contains(where: address.contains) {
+        if selectedConnector == .dmm, Self.isDMMForeignURL(url) {
             installDMMRegionCookies(in: webView) { [weak webView] in
                 webView?.load(URLRequest(url: selectedConnector.url))
             }
             return
         }
 
-        if BrowserConstants.dmmLoginMarkers.contains(where: address.contains) {
+        if selectedConnector == .dmm, Self.isDMMLoginURL(url) {
             fillCredentials(in: webView, connector: .dmm, scriptBuilder: Self.dmmFillScript)
             return
         }
 
         switch selectedConnector {
-        case .ooi where url.host?.lowercased().hasSuffix("ooi.moe") == true:
+        case .ooi where Self.isProxyLoginURL(url, domain: "ooi.moe"):
             fillCredentials(in: webView, connector: .ooi, scriptBuilder: Self.proxyFillScript)
-        case .kanmoe where url.host?.lowercased().hasSuffix("kancolle.moe") == true:
+        case .kanmoe where Self.isProxyLoginURL(url, domain: "kancolle.moe"):
             fillCredentials(in: webView, connector: .kanmoe, scriptBuilder: Self.proxyFillScript)
         default:
             break
@@ -78,7 +87,8 @@ final class LoginAutomation {
         scriptBuilder: (String, String) throws -> String
     ) {
         do {
-            guard let credentials = try keychain.load(for: connector) else { return }
+            let credentials = try sessionCredentials ?? keychain.load(for: connector)
+            guard let credentials else { return }
             let script = try scriptBuilder(credentials.id, credentials.password)
             webView.evaluateJavaScript(script) { [weak self] _, error in
                 if let error { self?.onError?(.javascript(error)) }
@@ -88,6 +98,56 @@ final class LoginAutomation {
         } catch {
             onError?(.keychain(error))
         }
+    }
+
+    private static func normalizedHost(_ url: URL) -> String? {
+        guard url.scheme?.lowercased() == "https",
+              let host = url.host?.lowercased() else {
+            return nil
+        }
+        return host.hasSuffix(".") ? String(host.dropLast()) : host
+    }
+
+    private static func hostMatches(_ host: String, domain: String) -> Bool {
+        host == domain || host.hasSuffix("." + domain)
+    }
+
+    private static func isGoogleLoginURL(_ url: URL) -> Bool {
+        normalizedHost(url) == "accounts.google.com"
+    }
+
+    private static func isDMMLoginURL(_ url: URL) -> Bool {
+        guard let host = normalizedHost(url) else { return false }
+        let path = url.path.lowercased()
+        switch host {
+        case "www.dmm.com":
+            return path == "/my/-/login" || path.hasPrefix("/my/-/login/")
+        case "accounts.dmm.com":
+            return path == "/service/login/password"
+                || path.hasPrefix("/service/login/password/")
+        default:
+            return false
+        }
+    }
+
+    private static func isDMMForeignURL(_ url: URL) -> Bool {
+        guard let host = normalizedHost(url) else { return false }
+        let path = url.path.lowercased()
+        return (host == "www.dmm.com"
+                && (path == "/netgame/foreign" || path.hasPrefix("/netgame/foreign/")))
+            || (host == "special.dmm.com"
+                && (path == "/not-available-in-your-region"
+                    || path.hasPrefix("/not-available-in-your-region/")))
+    }
+
+    private static func isProxyLoginURL(_ url: URL, domain: String) -> Bool {
+        guard let host = normalizedHost(url), hostMatches(host, domain: domain) else {
+            return false
+        }
+        let path = url.path.lowercased()
+        // Both connectors serve their login form at the root and may redirect
+        // to a dedicated login path. Never infer login state from query text.
+        return path == "/" || path == "/login" || path.hasPrefix("/login/")
     }
 
     private func useGoogleUserAgentIfNeeded(_ webView: WKWebView) {

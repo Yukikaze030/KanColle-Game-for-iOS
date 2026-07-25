@@ -231,7 +231,7 @@ struct SettingsView: View {
         } header: {
             Text("内存")
         } footer: {
-            Text("自动阈值按设备物理内存计算，且不会低于 128 MB。")
+            Text("该数值监测 App 主进程；WebView 独立进程由系统内存警告和白屏恢复机制监测。自动阈值按设备内存分档。")
         }
         .onChange(of: memoryWarnEnabled) { _, value in update { $0.memoryWarnEnabled = value } }
         .onChange(of: memoryWarnThresholdMB) { _, value in

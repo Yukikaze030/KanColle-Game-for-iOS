@@ -3,9 +3,10 @@ import Observation
 import UIKit
 import MachO
 
-/// Monitors this app's physical footprint. WKWebView does not expose a reliable
-/// JavaScript heap metric on iOS, so native `phys_footprint` is the single
-/// source used for warnings and diagnostics.
+/// Monitors the host app process's physical footprint. Public iOS APIs cannot
+/// read the separate WKWebContent process footprint, so system memory warnings
+/// and `webViewWebContentProcessDidTerminate` remain the primary WebView OOM
+/// signals.
 @MainActor
 @Observable final class MemoryMonitor {
     enum Level: Sendable {
@@ -31,15 +32,16 @@ import MachO
         sampleInterval: TimeInterval = 5,
         diagnostics: DiagnosticsStore? = nil
     ) {
-        let physicalMB = Double(ProcessInfo.processInfo.physicalMemory) / 1_048_576
-        self.thresholdMB = max(128, thresholdMB ?? physicalMB * 0.4)
+        self.thresholdMB = max(
+            128,
+            thresholdMB ?? Self.recommendedThresholdMB()
+        )
         self.sampleInterval = max(1, sampleInterval)
         self.diagnostics = diagnostics ?? .shared
     }
 
     func updateThresholdMB(_ value: Double?) {
-        let physicalMB = Double(ProcessInfo.processInfo.physicalMemory) / 1_048_576
-        thresholdMB = max(128, value ?? physicalMB * 0.4)
+        thresholdMB = max(128, value ?? Self.recommendedThresholdMB())
         evaluateLevel()
     }
 
@@ -109,5 +111,16 @@ import MachO
         }
         guard result == KERN_SUCCESS else { return nil }
         return Double(info.phys_footprint) / 1_048_576
+    }
+
+    private static func recommendedThresholdMB() -> Double {
+        let physicalGB = Double(ProcessInfo.processInfo.physicalMemory)
+            / 1_073_741_824
+        switch physicalGB {
+        case ..<3.5: return 180
+        case ..<5: return 260
+        case ..<7: return 380
+        default: return 512
+        }
     }
 }

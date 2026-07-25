@@ -126,6 +126,8 @@ public final class ResourceCache: @unchecked Sendable {
 
         let upstreamURL = mappedGadgetURL(for: originalURL, path: head.path)
             ?? originalURL
+        let isCrossHostMapping =
+            upstreamURL.host?.lowercased() != originalURL.host?.lowercased()
         let cacheKey = Self.cacheKey(for: originalURL)
         let fileURL = cacheFileURL(forKey: cacheKey, originalURL: originalURL)
         let requestVersion = Self.version(from: originalURL)
@@ -171,7 +173,8 @@ public final class ResourceCache: @unchecked Sendable {
         var request = makeRequest(
             url: upstreamURL,
             sourceHead: head,
-            lastModified: canRevalidate ? storedRow?.lastModified : nil
+            lastModified: canRevalidate ? storedRow?.lastModified : nil,
+            isCrossHostMapping: isCrossHostMapping
         )
         request.httpMethod = method
 
@@ -294,7 +297,7 @@ public final class ResourceCache: @unchecked Sendable {
                   string: settings.alterGadgetEndpoint
               ),
               let scheme = endpoint.scheme?.lowercased(),
-              scheme == "http" || scheme == "https",
+              scheme == "https",
               endpoint.host != nil,
               endpoint.user == nil,
               endpoint.password == nil
@@ -324,20 +327,28 @@ public final class ResourceCache: @unchecked Sendable {
     private func makeRequest(
         url: URL,
         sourceHead: ProxyHTTPParser.HTTPRequestHead,
-        lastModified: String?
+        lastModified: String?,
+        isCrossHostMapping: Bool
     ) -> URLRequest {
         var request = URLRequest(
             url: url,
             cachePolicy: .reloadIgnoringLocalCacheData,
             timeoutInterval: 30
         )
-        let excluded = Set([
+        let alwaysExcluded = Set([
             "host", "connection", "proxy-connection", "content-length",
             "transfer-encoding", "range", "if-modified-since",
-            "accept-encoding"
+            "accept-encoding", "keep-alive", "upgrade", "te", "trailer"
+        ])
+        // Gadget 绕行会跨 host。只复制不会携带身份、来源或会话状态的
+        // 展示协商头，绝不把游戏服务器凭证发送给第三方缓存端点。
+        let crossHostAllowlist = Set([
+            "accept", "accept-language", "user-agent"
         ])
         for (name, value) in sourceHead.headers
-        where !excluded.contains(name.lowercased()) {
+        where !alwaysExcluded.contains(name.lowercased())
+            && (!isCrossHostMapping
+                || crossHostAllowlist.contains(name.lowercased())) {
             request.setValue(value, forHTTPHeaderField: name)
         }
         request.setValue("identity", forHTTPHeaderField: "Accept-Encoding")
@@ -580,7 +591,7 @@ public final class ResourceCache: @unchecked Sendable {
     }
 }
 
-private final class BoundedURLSessionDelegate: NSObject,
+final class BoundedURLSessionDelegate: NSObject,
     URLSessionDataDelegate,
     @unchecked Sendable
 {
@@ -630,6 +641,18 @@ private final class BoundedURLSessionDelegate: NSObject,
             return
         }
         body.append(data)
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        task: URLSessionTask,
+        willPerformHTTPRedirection response: HTTPURLResponse,
+        newRequest request: URLRequest,
+        completionHandler: @escaping (URLRequest?) -> Void
+    ) {
+        // 禁止自动重定向。否则可信 Gadget 端点仍可能把经过筛选的请求
+        // 导向攻击者 host；调用方只接收原始 3xx 响应。
+        completionHandler(nil)
     }
 
     func urlSession(

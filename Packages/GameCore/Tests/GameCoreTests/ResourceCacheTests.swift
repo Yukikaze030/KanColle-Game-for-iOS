@@ -141,6 +141,109 @@ final class ResourceCacheTests: XCTestCase {
         )
     }
 
+    func testGadgetEndpointRejectsHTTPAndKeepsOriginalHost() {
+        defaults.set(true, forKey: "pref_alter_gadget")
+        defaults.set(
+            "http://cache.example.test/root/",
+            forKey: "pref_alter_endpoint"
+        )
+        var fetchedURL: URL?
+        let cache = makeCache { request, _ in
+            fetchedURL = request.url
+            return .init(statusCode: 200, headers: [], body: Data())
+        }
+
+        _ = cache.response(for: head(path: "/gadget_html5/script/app.js"))
+
+        XCTAssertEqual(
+            fetchedURL?.host,
+            "w01y.kancolle-server.com",
+            "明文 HTTP Gadget 端点必须被拒绝"
+        )
+        XCTAssertEqual(fetchedURL?.scheme, "https")
+    }
+
+    func testCrossHostGadgetMappingUsesHeaderAllowlist() {
+        defaults.set(true, forKey: "pref_alter_gadget")
+        defaults.set(
+            "https://cache.example.test/root/",
+            forKey: "pref_alter_endpoint"
+        )
+        var fetchedRequest: URLRequest?
+        let cache = makeCache { request, _ in
+            fetchedRequest = request
+            return .init(statusCode: 200, headers: [], body: Data())
+        }
+        let requestHead = ProxyHTTPParser.HTTPRequestHead(
+            method: "GET",
+            path: "/gadget_html5/script/app.js",
+            host: "w01y.kancolle-server.com",
+            port: 443,
+            headers: [
+                ("Host", "w01y.kancolle-server.com"),
+                ("Accept", "application/javascript"),
+                ("Accept-Language", "ja-JP"),
+                ("User-Agent", "Safe-UA"),
+                ("Cookie", "session=secret"),
+                ("Authorization", "Bearer secret"),
+                ("Proxy-Authorization", "Basic secret"),
+                ("Origin", "https://play.games.dmm.com"),
+                ("Referer", "https://play.games.dmm.com/game/kancolle"),
+                ("X-Session-Token", "secret"),
+                ("Connection", "keep-alive")
+            ]
+        )
+
+        _ = cache.response(for: requestHead)
+
+        let headers = fetchedRequest?.allHTTPHeaderFields ?? [:]
+        XCTAssertEqual(headers["Accept"], "application/javascript")
+        XCTAssertEqual(headers["Accept-Language"], "ja-JP")
+        XCTAssertEqual(headers["User-Agent"], "Safe-UA")
+        XCTAssertEqual(headers["Accept-Encoding"], "identity")
+        for forbidden in [
+            "Cookie", "Authorization", "Proxy-Authorization", "Origin",
+            "Referer", "X-Session-Token", "Connection"
+        ] {
+            XCTAssertNil(
+                headers[forbidden],
+                "\(forbidden) 不得发送给第三方 Gadget 端点"
+            )
+        }
+    }
+
+    func testProductionFetcherRejectsRedirectFollowing() throws {
+        let delegate = BoundedURLSessionDelegate(maximumBodyBytes: 1_024)
+        let sourceURL = try XCTUnwrap(
+            URL(string: "https://cache.example.test/resource")
+        )
+        let redirectURL = try XCTUnwrap(
+            URL(string: "https://attacker.example/collect")
+        )
+        let response = try XCTUnwrap(HTTPURLResponse(
+            url: sourceURL,
+            statusCode: 302,
+            httpVersion: "HTTP/1.1",
+            headerFields: ["Location": redirectURL.absoluteString]
+        ))
+        let task = URLSession.shared.dataTask(with: sourceURL)
+        let completion = expectation(description: "redirect decision")
+        var redirectedRequest: URLRequest?
+
+        delegate.urlSession(
+            URLSession.shared,
+            task: task,
+            willPerformHTTPRedirection: response,
+            newRequest: URLRequest(url: redirectURL)
+        ) { request in
+            redirectedRequest = request
+            completion.fulfill()
+        }
+
+        wait(for: [completion], timeout: 1)
+        XCTAssertNil(redirectedRequest)
+    }
+
     func testFreshCacheHitDoesNotFetchNetwork() throws {
         let fixedNow = Date(timeIntervalSince1970: 10_000)
         var fetchCount = 0
