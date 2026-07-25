@@ -4,6 +4,10 @@ import Foundation
 /// JS snippets are verbatim copies; the only change is that Android
 /// `GotoBrowser.xxx` JavascriptInterface calls are replaced with
 /// `window.webkit.messageHandlers.gotoBrowser.postMessage({...})`.
+/// Note: injection timing/mechanism differs from Android — there the viewport
+/// etc. are applied via evaluateJavascript after page load; on iOS they are
+/// injected as WKUserScript (viewport at atDocumentEnd, main frame only;
+/// see BrowserView).
 public enum BrowserConstants {
     /// CACHE_DIR in Constants.java is "/browser_cache/"; on iOS we append
     /// this name under the app's caches directory.

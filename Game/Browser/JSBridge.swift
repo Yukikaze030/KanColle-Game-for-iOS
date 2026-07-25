@@ -11,11 +11,11 @@ final class JSBridge: NSObject, WKScriptMessageHandler {
     }
     var onEvent: (Event) -> Void = { _ in }
 
-    func userContentController(_ c: WKUserContentController, didReceive m: WKScriptMessage) {
-        guard let dict = m.body as? [String: Any], let type = dict["type"] as? String else { return }
+    func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        guard let dict = message.body as? [String: Any], let type = dict["type"] as? String else { return }
         switch type {
         case "capture":
-            if let d = dict["data"] as? String { onEvent(.capture(dataURL: d)) }
+            if let data = dict["data"] as? String { onEvent(.capture(dataURL: data)) }
         case "kcsapi":
             onEvent(.kcsapi(endpoint: dict["endpoint"] as? String ?? "",
                             request: dict["request"] as? String,
@@ -25,7 +25,7 @@ final class JSBridge: NSObject, WKScriptMessageHandler {
         case "memory":
             onEvent(.memoryReport(jsHeapMB: dict["jsHeapMB"] as? Double ?? 0))
         default:
-            onEvent(.log(String(describing: m.body)))
+            onEvent(.log(String(describing: message.body)))
         }
     }
 }
