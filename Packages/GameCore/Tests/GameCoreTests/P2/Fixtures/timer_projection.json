@@ -1,0 +1,41 @@
+{
+  "sourceRevision": 42,
+  "expeditions": [
+    {
+      "fleetIndex": 2,
+      "fleetName": "第二舰队",
+      "missionID": 101,
+      "arrivalDate": 1700003600000,
+      "isActive": true
+    },
+    {
+      "fleetIndex": 1,
+      "fleetName": "第一舰队",
+      "missionID": 5,
+      "arrivalDate": 1700003600000,
+      "isActive": true
+    }
+  ],
+  "dockings": [
+    {
+      "dockIndex": 1,
+      "state": 1,
+      "shipID": 1001,
+      "shipName": "雪风",
+      "completionDate": 1700001800000
+    }
+  ],
+  "morales": [
+    {
+      "fleetIndex": 3,
+      "fleetName": "第三舰队",
+      "condition": 38
+    }
+  ],
+  "akashi": {
+    "hasValidFlagship": true,
+    "formationSignature": "1:187|2:1001,1002",
+    "detail": "第1舰队 2艘修理"
+  },
+  "moraleThreshold": 40
+}
