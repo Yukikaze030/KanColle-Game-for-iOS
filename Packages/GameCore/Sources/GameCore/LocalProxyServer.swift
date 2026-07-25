@@ -55,13 +55,34 @@ public final class LocalProxyServer: @unchecked Sendable {
     public var onRequest: ((ProxyRequestLog) -> Void)?
     public var onGameResourceRequest: ((ProxyHTTPParser.HTTPRequestHead) -> ResourceResponse?)?
     public var isInspectableHost: ((String, Int) -> Bool) = { host, port in
-        port == 80 && host.hasSuffix("kancolle-server.com")
+        (port == 80 || port == 443)
+            && LocalProxyServer.isGameServerHost(host)
+    }
+    public var mitmCA: MitmCA?
+    public var isMitmHost: ((String) -> Bool) = { host in
+        LocalProxyServer.isGameServerHost(host)
     }
 
     private var listener: NWListener?
     private let queue = DispatchQueue(label: "localproxy", attributes: .concurrent)
     private let registryLock = NSLock()
     private var active: [ObjectIdentifier: NWConnection] = [:]
+    private var activeMitmSessions: [UUID: MitmSession] = [:]
+    var tunnelConnectionFactory: (String, Int) -> NWConnection = { host, port in
+        NWConnection(
+            host: NWEndpoint.Host(host),
+            port: NWEndpoint.Port(rawValue: UInt16(clamping: port))!,
+            using: .tcp
+        )
+    }
+
+    var activeMitmSessionCount: Int {
+        registryLock.lock()
+        defer { registryLock.unlock() }
+        return activeMitmSessions.count
+    }
+    var onMitmSessionStarted: ((Int) -> Void)?
+    var onMitmSessionClosed: ((MitmSession.CloseReason) -> Void)?
 
     public init() {}
 
@@ -82,8 +103,12 @@ public final class LocalProxyServer: @unchecked Sendable {
         listener = nil
         registryLock.lock()
         let conns = Array(active.values)
+        let sessions = Array(activeMitmSessions.values)
         active.removeAll()
         registryLock.unlock()
+        // Sessions remain strongly held until their idempotent onClosed
+        // callback removes them from the registry.
+        sessions.forEach { $0.cancel() }
         conns.forEach { $0.cancel() }
     }
 
@@ -119,8 +144,12 @@ public final class LocalProxyServer: @unchecked Sendable {
             guard let self else { conn.cancel(); return }
             switch head {
             case .connect(let host, let port):
-                // CONNECT 的 leftover 理论上为空（客户端会等 200 再发 TLS/HTTP），忽略
-                self.handleConnect(conn, host: host, port: port)
+                self.handleConnect(
+                    conn,
+                    host: host,
+                    port: port,
+                    initialTunnelData: leftover
+                )
             case .request(let req):
                 self.serveHTTPRequest(conn, head: req, leftover: leftover)
             case .needMore, .invalid:
@@ -160,7 +189,12 @@ public final class LocalProxyServer: @unchecked Sendable {
 
     // MARK: - CONNECT 分流
 
-    private func handleConnect(_ conn: NWConnection, host: String, port: Int) {
+    private func handleConnect(
+        _ conn: NWConnection,
+        host: String,
+        port: Int,
+        initialTunnelData: Data
+    ) {
         if BlockRules.isBlocked(host: host) {
             log(ProxyRequestLog(host: host, path: "CONNECT:\(port)", statusCode: 403, blocked: true))
             reply(conn, Data("HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".utf8)) {
@@ -169,7 +203,18 @@ public final class LocalProxyServer: @unchecked Sendable {
             return
         }
         log(ProxyRequestLog(host: host, path: "CONNECT:\(port)", statusCode: 200, blocked: false))
-        if port == 80 {
+        if port == 443,
+           let mitmCA,
+           isMitmHost(host),
+           startMitmSession(
+               conn,
+               host: host,
+               initialEncryptedData: initialTunnelData,
+               certificateAuthority: mitmCA
+           )
+        {
+            return
+        } else if port == 80 {
             // HTTP 终止模式：回 200 后按普通 HTTP 请求处理后续流量
             reply(conn, Data("HTTP/1.1 200 Connection Established\r\n\r\n".utf8)) { [weak self] in
                 guard let self else { conn.cancel(); return }
@@ -184,25 +229,132 @@ public final class LocalProxyServer: @unchecked Sendable {
                 }
             }
         } else {
-            tunnel(conn, host: host, port: port)
+            tunnel(
+                conn,
+                host: host,
+                port: port,
+                initialTunnelData: initialTunnelData
+            )
         }
     }
 
+    private func startMitmSession(
+        _ conn: NWConnection,
+        host: String,
+        initialEncryptedData: Data,
+        certificateAuthority: MitmCA
+    ) -> Bool {
+        let session: MitmSession
+        do {
+            session = try MitmSession(
+                clientConnection: conn,
+                host: host,
+                certificateAuthority: certificateAuthority,
+                localResourceHandler: { [weak self] head, _ in
+                    guard let self else { return nil }
+                    let urlString = "https://\(head.host)\(head.path)"
+                    if BlockRules.isBlocked(urlString: urlString) {
+                        self.log(
+                            ProxyRequestLog(
+                                host: head.host,
+                                path: head.path,
+                                statusCode: 200,
+                                blocked: true
+                            )
+                        )
+                        return ResourceResponse(
+                            statusCode: 200,
+                            headers: [("Content-Type", "text/plain")],
+                            body: Data()
+                        )
+                    }
+                    guard self.isInspectableHost(head.host, 443) else {
+                        return nil
+                    }
+                    let local = self.onGameResourceRequest?(head)
+                    if let local {
+                        self.log(
+                            ProxyRequestLog(
+                                host: head.host,
+                                path: head.path,
+                                statusCode: local.statusCode,
+                                blocked: false
+                            )
+                        )
+                    }
+                    return local
+                }
+            )
+        } catch {
+            return false
+        }
+
+        let sessionID = UUID()
+        session.onClosed = { [weak self, weak conn] reason in
+            guard let self else { return }
+            self.registryLock.lock()
+            self.activeMitmSessions.removeValue(forKey: sessionID)
+            self.registryLock.unlock()
+            if let conn {
+                self.untrack(conn)
+            }
+            self.onMitmSessionClosed?(reason)
+        }
+        registryLock.lock()
+        activeMitmSessions[sessionID] = session
+        registryLock.unlock()
+
+        conn.send(
+            content: Data("HTTP/1.1 200 Connection Established\r\n\r\n".utf8),
+            completion: .contentProcessed { [weak self] error in
+                if error == nil {
+                    self?.onMitmSessionStarted?(initialEncryptedData.count)
+                    session.start(initialEncryptedData: initialEncryptedData)
+                } else {
+                    session.cancel()
+                    conn.cancel()
+                }
+            }
+        )
+        return true
+    }
+
     /// 443 隧道：回 200 后双向透传。
-    private func tunnel(_ conn: NWConnection, host: String, port: Int) {
-        guard let nwPort = NWEndpoint.Port(rawValue: UInt16(clamping: port)) else {
+    private func tunnel(
+        _ conn: NWConnection,
+        host: String,
+        port: Int,
+        initialTunnelData: Data = Data()
+    ) {
+        guard (1...65_535).contains(port) else {
             conn.cancel()
             return
         }
-        let upstream = NWConnection(host: NWEndpoint.Host(host), port: nwPort, using: .tcp)
+        let upstream = tunnelConnectionFactory(host, port)
         track(upstream)
         upstream.stateUpdateHandler = { [weak self, weak conn, weak upstream] state in
             guard let self, let conn, let upstream else { return }
             switch state {
             case .ready:
                 self.reply(conn, Data("HTTP/1.1 200 Connection Established\r\n\r\n".utf8)) {
-                    self.pump(conn, to: upstream)
-                    self.pump(upstream, to: conn)
+                    let beginPumps = {
+                        self.pump(conn, to: upstream)
+                        self.pump(upstream, to: conn)
+                    }
+                    if initialTunnelData.isEmpty {
+                        beginPumps()
+                    } else {
+                        upstream.send(
+                            content: initialTunnelData,
+                            completion: .contentProcessed { error in
+                                if error == nil {
+                                    beginPumps()
+                                } else {
+                                    self.closePair(conn, upstream)
+                                }
+                            }
+                        )
+                    }
                 }
             case .failed, .cancelled:
                 self.untrack(upstream)
@@ -374,5 +526,17 @@ public final class LocalProxyServer: @unchecked Sendable {
 
     private func log(_ entry: ProxyRequestLog) {
         onRequest?(entry)
+    }
+
+    private static func isGameServerHost(_ host: String) -> Bool {
+        var normalized = host.lowercased()
+        while normalized.hasSuffix(".") {
+            normalized.removeLast()
+        }
+        guard !normalized.hasPrefix("."), !normalized.contains("..") else {
+            return false
+        }
+        return normalized == "kancolle-server.com"
+            || normalized.hasSuffix(".kancolle-server.com")
     }
 }
