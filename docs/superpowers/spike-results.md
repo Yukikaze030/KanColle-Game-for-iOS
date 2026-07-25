@@ -30,3 +30,10 @@
 - 新增任务 6A（MitmCA：CA 生成/站点证书签发/Keychain）与任务 6B（证书安装引导 + 代理 TLS 终止集成 + MITM 复验），插入任务 6 与任务 7 之间
 - 任务 8/9 前提从「明文 HTTP」改为「MITM 解密后的明文」
 - 内存监测弃用 JS 堆指标（performance.memory 不可用），仅用原生 phys_footprint（任务 14 相应简化）
+
+## MitmCA iOS 宿主冒烟（任务 6A）
+
+- 使用带 App entitlement 的 `KanColle.Game` 模拟器构建，在 iPhone 17 Pro 模拟器内调用 `MitmCA`。
+- 首次生成根 CA、重新实例化读取同一根 CA、签发 `w00g.kancolle-server.com` 站点证书均成功。
+- 冒烟结果：`PASS root=789 site=844`；随后已移除临时启动钩子，未把测试探针留在正式源码中。
+- 说明：无宿主的 iOS 命令行测试 bundle 会因缺少 Keychain entitlement 返回 `errSecMissingEntitlement (-34018)`；因此 iOS Keychain 行为必须在已签名 App 宿主中验证。macOS `swift test` 继续负责纯逻辑与 Keychain 持久化回归测试。
