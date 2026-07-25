@@ -9,6 +9,8 @@ import SwiftUI
 
 @main
 struct GameApp: App {
+    @UIApplicationDelegateAdaptor(GameAppDelegate.self) private var appDelegate
+
     var body: some Scene {
         WindowGroup {
             RootView()

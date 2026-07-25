@@ -8,14 +8,74 @@ struct BrowserView: UIViewRepresentable {
     let proxyPort: UInt16
     let settings: SettingsStore
     let bridge: JSBridge
+    let controller: BrowserController?
+    let onNavigationFinished: ((WKWebView) -> Void)?
+    let onGameReady: (() -> Void)?
+    let onProcessTerminated: (() -> Void)?
 
-    // TODO(任务6后清理)：Spike 探针脚本（kcsapi XHR 钩子 + main.js 改写标记检测）
-    private static let spikeProbeScript = """
-    (function(){var O=XMLHttpRequest.prototype.open;XMLHttpRequest.prototype.open=function(m,u){try{if(u&&u.indexOf("/kcsapi/")>=0){window.webkit.messageHandlers.gotoBrowser.postMessage({type:"kcsapi",endpoint:String(u).split("?")[0],request:null,response:""});}}catch(e){}return O.apply(this,arguments);};})();
-    window.addEventListener("load",function(){try{if(window.__SPIKE_PATCHED){window.webkit.messageHandlers.gotoBrowser.postMessage({type:"log",text:"SPIKE_PATCHED_OK"});}}catch(e){}});
+    init(url: URL,
+         proxyPort: UInt16,
+         settings: SettingsStore,
+         bridge: JSBridge,
+         controller: BrowserController? = nil,
+         onNavigationFinished: ((WKWebView) -> Void)? = nil,
+         onGameReady: (() -> Void)? = nil,
+         onProcessTerminated: (() -> Void)? = nil) {
+        self.url = url
+        self.proxyPort = proxyPort
+        self.settings = settings
+        self.bridge = bridge
+        self.controller = controller
+        self.onNavigationFinished = onNavigationFinished
+        self.onGameReady = onGameReady
+        self.onProcessTerminated = onProcessTerminated
+    }
+
+    /// Runs in the DMM shell and in the game iframe. The shell is reduced to the
+    /// 1200×720 game frame; inside the iframe the game surface fills that viewport.
+    /// Keeping the original aspect ratio avoids shifting hit targets on wide iPhones.
+    private static let gameLayoutScript = """
+    (() => {
+      if (window.__gotoGameLayoutInstalled) return;
+      window.__gotoGameLayoutInstalled = true;
+      const style = document.createElement("style");
+      style.textContent = `
+        html,body{margin:0!important;padding:0!important;width:100%!important;height:100%!important;overflow:hidden!important;background:#000!important}
+        header,footer,nav,.dmm-ntgnavi,.area-naviapp,#ntg-recommend,#foot,#spacing_top,#sectionWrap{display:none!important}
+        .gamesResetStyle>main,#main-ntg,#area-game,#page,#w{margin:0!important;padding:0!important;max-width:none!important}
+        .gamesResetStyle>:not(main){display:none!important}
+        #game_frame,#externalswf{border:0!important;transform-origin:top left!important}
+      `;
+      (document.head || document.documentElement).appendChild(style);
+      const resize = () => {
+        const frame = document.getElementById("game_frame") || document.getElementById("externalswf");
+        if (frame) {
+          const scale = Math.min(innerWidth / 1200, innerHeight / 720);
+          frame.style.position = "fixed";
+          frame.style.width = "1200px";
+          frame.style.height = "720px";
+          frame.style.left = `${Math.max(0, (innerWidth - 1200 * scale) / 2)}px`;
+          frame.style.top = `${Math.max(0, (innerHeight - 720 * scale) / 2)}px`;
+          frame.style.transform = `scale(${scale})`;
+        }
+      };
+      new MutationObserver(resize).observe(document.documentElement,{childList:true,subtree:true});
+      addEventListener("resize",resize,{passive:true});
+      addEventListener("webglcontextlost",event=>{
+        event.preventDefault();
+        try{window.webkit.messageHandlers.gotoBrowser.postMessage({type:"log",text:"WEBGL_CONTEXT_LOST"});}catch(_){}
+      },true);
+      addEventListener("webglcontextrestored",()=>{
+        try{window.webkit.messageHandlers.gotoBrowser.postMessage({type:"log",text:"WEBGL_CONTEXT_RESTORED"});}catch(_){}
+        resize();
+      },true);
+      resize();
+    })();
     """
 
-    func makeCoordinator() -> WebViewCoordinator { WebViewCoordinator() }
+    func makeCoordinator() -> WebViewCoordinator {
+        WebViewCoordinator(controller: controller ?? BrowserController())
+    }
 
     func makeUIView(context: Context) -> WKWebView {
         let config = WKWebViewConfiguration()
@@ -26,39 +86,36 @@ struct BrowserView: UIViewRepresentable {
             let endpoint = NWEndpoint.hostPort(host: "127.0.0.1", port: port)
             config.websiteDataStore.proxyConfigurations = [ProxyConfiguration(httpCONNECTProxy: endpoint)]
         }
-        // 拆成两个独立脚本，避免任一脚本异常影响另一个：
-        // - viewport 需要 document.head，atDocumentStart 时几乎必然为 undefined，
-        //   故 atDocumentEnd 注入（Android 原版是页面加载后 evaluateJavascript，见 BrowserConstants）
-        // - 内存探针是 setInterval + messageHandlers，atDocumentStart 安全
-        // 均 forMainFrameOnly: true，避免 iframe 重复注入/重复上报内存
+        // viewport 依赖 document.head，故在 documentEnd 注入；正式布局脚本必须
+        // 同时进入 DMM 外壳与游戏 iframe，才能隐藏页面杂项并只保留游戏画面。
         let viewport = WKUserScript(source: BrowserConstants.viewportMetaScript,
                                     injectionTime: .atDocumentEnd, forMainFrameOnly: true)
-        let memoryProbe = WKUserScript(source: BrowserConstants.memoryProbeScript,
-                                       injectionTime: .atDocumentStart, forMainFrameOnly: true)
+        let gameLayout = WKUserScript(source: Self.gameLayoutScript,
+                                      injectionTime: .atDocumentEnd, forMainFrameOnly: false)
         config.userContentController.addUserScript(viewport)
-        config.userContentController.addUserScript(memoryProbe)
-        // TODO(任务6后清理)：Spike 探针脚本（合并为一条 WKUserScript）：
-        // 1) kcsapi XHR 钩子——只验证钩子能装进游戏 iframe 并触发桥，不解析响应；
-        // 2) main.js 改写验证——代理在 main.js 末尾追加 window.__SPIKE_PATCHED=1，
-        //    页面 load 后若读到该标记则上报 SPIKE_PATCHED_OK（证明改写+注入全链路通）。
-        // forMainFrameOnly: false——游戏跑在 iframe 里，必须进 iframe 才能钩到。
-        let spikeProbe = WKUserScript(source: Self.spikeProbeScript,
-                                      injectionTime: .atDocumentStart, forMainFrameOnly: false)
-        config.userContentController.addUserScript(spikeProbe)
+        config.userContentController.addUserScript(gameLayout)
         config.userContentController.add(bridge, name: "gotoBrowser")
 
-        let wv = WKWebView(frame: .zero, configuration: config)
-        wv.customUserAgent = settings.legacyRenderer ? BrowserConstants.userAgentIOSCanvas : BrowserConstants.userAgentDesktop
-        wv.navigationDelegate = context.coordinator
-        wv.allowsBackForwardNavigationGestures = false
-        wv.scrollView.bounces = false
-        wv.isOpaque = true
-        context.coordinator.webView = wv
-        wv.load(URLRequest(url: url))
-        return wv
+        let webView = WKWebView(frame: .zero, configuration: config)
+        webView.customUserAgent = settings.legacyRenderer ? BrowserConstants.userAgentIOSCanvas : BrowserConstants.userAgentDesktop
+        webView.navigationDelegate = context.coordinator
+        webView.allowsBackForwardNavigationGestures = false
+        webView.scrollView.bounces = false
+        webView.scrollView.contentInsetAdjustmentBehavior = .never
+        webView.isOpaque = true
+        context.coordinator.attach(webView)
+        context.coordinator.onNavigationFinished = onNavigationFinished
+        context.coordinator.onGameReady = onGameReady
+        context.coordinator.onProcessTerminated = onProcessTerminated
+        webView.load(URLRequest(url: url))
+        return webView
     }
 
     // 当前为一次性配置：makeUIView 之后 url / settings / proxyPort 的变更不会生效
     //（SwiftUI 更新不重建 WKWebView，也不重新 load）。任务 12 正式接线时按需处理。
-    func updateUIView(_ webView: WKWebView, context: Context) {}
+    func updateUIView(_ webView: WKWebView, context: Context) {
+        context.coordinator.onNavigationFinished = onNavigationFinished
+        context.coordinator.onGameReady = onGameReady
+        context.coordinator.onProcessTerminated = onProcessTerminated
+    }
 }
