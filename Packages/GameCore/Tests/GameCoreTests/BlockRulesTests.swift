@@ -22,10 +22,17 @@ final class BlockRulesTests: XCTestCase {
         XCTAssertTrue(BlockRules.isBlocked(host: "www.googletagmanager.com"))
         XCTAssertTrue(BlockRules.isBlocked(host: "www.facebook.com"))
         XCTAssertTrue(BlockRules.isBlocked(host: "pics.dmm.com"))
-        XCTAssertTrue(BlockRules.isBlocked(host: "twitter.com"))
-        // 注意：派生片段含 "dmm.com"（来自 "dmm.com/latest/js/dmm.tracking"），
-        // 因此 dmm.com 及其子域的 CONNECT 也会被判定为 blocked（已知行为，见任务 4 汇报）。
-        XCTAssertTrue(BlockRules.isBlocked(host: "play.games.dmm.com"))
+        // 含路径的规则不参与 host 阻断：
+        XCTAssertFalse(BlockRules.isBlocked(host: "play.games.dmm.com"))
+        XCTAssertFalse(BlockRules.isBlocked(host: "www.dmm.com"))
+        XCTAssertFalse(BlockRules.isBlocked(host: "twitter.com"))
         XCTAssertFalse(BlockRules.isBlocked(host: "w01g.kancolle-server.com"))
+    }
+
+    func testPathScopedRulesStillBlockFullURL() {
+        // host 阻断放行的路径级规则，在完整 URL 层面仍然生效
+        XCTAssertTrue(BlockRules.isBlocked(urlString: "https://www.dmm.com/latest/js/dmm.tracking.js"))
+        XCTAssertTrue(BlockRules.isBlocked(urlString: "https://twitter.com/i/jot"))
+        XCTAssertTrue(BlockRules.isBlocked(urlString: "https://osapi.dmm.com/uikit/js/x.js"))
     }
 }

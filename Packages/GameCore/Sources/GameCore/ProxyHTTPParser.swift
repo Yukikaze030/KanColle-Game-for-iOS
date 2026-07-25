@@ -25,6 +25,9 @@ public struct ProxyHTTPParser {
     }
 
     private var buffer = Data()
+    /// 头部解析完成后，紧随 `\r\n\r\n` 到达的多余字节（通常是请求 body 的开头）。
+    /// 仅在 feed 返回 .request / .connect 时有意义。
+    public private(set) var leftover = Data()
     public init() {}
 
     public mutating func feed(_ data: Data) -> ParseResult {
@@ -32,6 +35,7 @@ public struct ProxyHTTPParser {
         guard let range = buffer.range(of: Data("\r\n\r\n".utf8)) else {
             return buffer.count > 64 * 1024 ? .invalid : .needMore
         }
+        leftover = buffer.subdata(in: range.upperBound..<buffer.count)
         let headData = buffer.subdata(in: 0..<range.lowerBound)
         guard let head = String(data: headData, encoding: .utf8) else { return .invalid }
         var lines = head.components(separatedBy: "\r\n")

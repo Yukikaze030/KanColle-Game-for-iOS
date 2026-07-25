@@ -103,13 +103,14 @@ public final class LocalProxyServer: @unchecked Sendable {
             }
         }
         conn.start(queue: queue)
-        readHead(conn) { [weak self] head in
+        readHead(conn) { [weak self] head, leftover in
             guard let self else { conn.cancel(); return }
             switch head {
             case .connect(let host, let port):
+                // CONNECT 的 leftover 理论上为空（客户端会等 200 再发 TLS/HTTP），忽略
                 self.handleConnect(conn, host: host, port: port)
             case .request(let req):
-                self.serveHTTPRequest(conn, head: req)
+                self.serveHTTPRequest(conn, head: req, leftover: leftover)
             case .needMore, .invalid:
                 conn.cancel()
             }
@@ -117,8 +118,9 @@ public final class LocalProxyServer: @unchecked Sendable {
     }
 
     /// 累积 receive 直到解析出完整头部（parser 单次使用，产出结果后丢弃）。
+    /// 返回解析结果与紧随头部的多余字节（请求 body 的开头）。
     private func readHead(_ conn: NWConnection,
-                          completion: @escaping (ProxyHTTPParser.ParseResult) -> Void) {
+                          completion: @escaping (ProxyHTTPParser.ParseResult, Data) -> Void) {
         var parser = ProxyHTTPParser()
         func receive() {
             conn.receive(minimumIncompleteLength: 1, maximumLength: 64 * 1024) { [weak self] data, _, isComplete, error in
@@ -129,7 +131,7 @@ public final class LocalProxyServer: @unchecked Sendable {
                     case .needMore:
                         receive()
                     case .request, .connect, .invalid:
-                        completion(result)
+                        completion(result, parser.leftover)
                     }
                 } else if error == nil && !isComplete {
                     // 空包但未结束：继续等
@@ -159,11 +161,11 @@ public final class LocalProxyServer: @unchecked Sendable {
             // HTTP 终止模式：回 200 后按普通 HTTP 请求处理后续流量
             reply(conn, Data("HTTP/1.1 200 Connection Established\r\n\r\n".utf8)) { [weak self] in
                 guard let self else { conn.cancel(); return }
-                self.readHead(conn) { [weak self] result in
+                self.readHead(conn) { [weak self] result, leftover in
                     guard let self else { conn.cancel(); return }
                     switch result {
                     case .request(let head):
-                        self.serveHTTPRequest(conn, head: head)
+                        self.serveHTTPRequest(conn, head: head, leftover: leftover)
                     default:
                         conn.cancel()
                     }
@@ -228,7 +230,8 @@ public final class LocalProxyServer: @unchecked Sendable {
 
     // MARK: - 普通 HTTP 请求
 
-    private func serveHTTPRequest(_ conn: NWConnection, head: ProxyHTTPParser.HTTPRequestHead) {
+    private func serveHTTPRequest(_ conn: NWConnection, head: ProxyHTTPParser.HTTPRequestHead,
+                                  leftover: Data) {
         let urlString = "http://\(head.host)\(head.path)"
         if BlockRules.isBlocked(urlString: urlString) {
             log(ProxyRequestLog(host: head.host, path: head.path, statusCode: 200, blocked: true))
@@ -243,45 +246,74 @@ public final class LocalProxyServer: @unchecked Sendable {
             reply(conn, local.serialized()) { conn.cancel() }
             return
         }
-        forward(conn, head: head)
+        forward(conn, head: head, leftover: leftover)
     }
 
-    /// 回源转发：重建请求（剔除 Connection/Proxy-Connection，加 Connection: close），
+    /// 回源转发：先按 Content-Length 从客户端收满 body（leftover 为已到达的开头），
+    /// 再重建请求（剔除 Connection/Proxy-Connection，加 Connection: close）发给上游，
     /// 累积完整响应后原样回传给客户端。
-    private func forward(_ conn: NWConnection, head: ProxyHTTPParser.HTTPRequestHead) {
+    private func forward(_ conn: NWConnection, head: ProxyHTTPParser.HTTPRequestHead,
+                         leftover: Data) {
         guard let nwPort = NWEndpoint.Port(rawValue: UInt16(clamping: head.port)) else {
             conn.cancel()
             return
         }
-        let upstream = NWConnection(host: NWEndpoint.Host(head.host), port: nwPort, using: .tcp)
-        track(upstream)
-        upstream.stateUpdateHandler = { [weak self, weak conn, weak upstream] state in
-            guard let self, let conn, let upstream else { return }
-            switch state {
-            case .ready:
-                var raw = "\(head.method) \(head.path) HTTP/1.1\r\n"
-                for (k, v) in head.headers {
-                    let lk = k.lowercased()
-                    if lk == "connection" || lk == "proxy-connection" { continue }
-                    raw += "\(k): \(v)\r\n"
-                }
-                raw += "Connection: close\r\n\r\n"
-                upstream.send(content: Data(raw.utf8), completion: .contentProcessed { [weak self, weak conn, weak upstream] error in
-                    guard let self, let conn, let upstream else { return }
-                    if error != nil {
-                        self.closePair(conn, upstream)
-                    } else {
-                        self.relayResponse(conn, upstream: upstream, head: head, buffer: Data())
+        let contentLength = head.header("content-length").flatMap(Int.init) ?? 0
+        collectBody(conn, already: leftover, total: contentLength) { [weak self] body in
+            guard let self, let body else { conn.cancel(); return }
+            let upstream = NWConnection(host: NWEndpoint.Host(head.host), port: nwPort, using: .tcp)
+            self.track(upstream)
+            upstream.stateUpdateHandler = { [weak self, weak conn, weak upstream] state in
+                guard let self, let conn, let upstream else { return }
+                switch state {
+                case .ready:
+                    var raw = "\(head.method) \(head.path) HTTP/1.1\r\n"
+                    for (k, v) in head.headers {
+                        let lk = k.lowercased()
+                        if lk == "connection" || lk == "proxy-connection" { continue }
+                        raw += "\(k): \(v)\r\n"
                     }
-                })
-            case .failed, .cancelled:
-                self.untrack(upstream)
-                conn.cancel()
-            default:
-                break
+                    raw += "Connection: close\r\n\r\n"
+                    var request = Data(raw.utf8)
+                    request.append(body)
+                    upstream.send(content: request, completion: .contentProcessed { [weak self, weak conn, weak upstream] error in
+                        guard let self, let conn, let upstream else { return }
+                        if error != nil {
+                            self.closePair(conn, upstream)
+                        } else {
+                            self.relayResponse(conn, upstream: upstream, head: head, buffer: Data())
+                        }
+                    })
+                case .failed, .cancelled:
+                    self.untrack(upstream)
+                    conn.cancel()
+                default:
+                    break
+                }
             }
+            upstream.start(queue: self.queue)
         }
-        upstream.start(queue: queue)
+    }
+
+    /// 从客户端继续 receive 直到收满 total 字节的 body（already 为已到达部分）。
+    /// 对端提前关闭或出错时回调 nil。
+    private func collectBody(_ conn: NWConnection, already: Data, total: Int,
+                             completion: @escaping (Data?) -> Void) {
+        if already.count >= total {
+            // leftover 可能超出 body（如下一个管线请求的开头），P1 每请求一连接，超出部分丢弃
+            completion(Data(already.prefix(total)))
+            return
+        }
+        conn.receive(minimumIncompleteLength: 1,
+                     maximumLength: max(64 * 1024, total - already.count)) { data, _, isComplete, error in
+            var acc = already
+            if let data { acc.append(data) }
+            if error != nil || (isComplete && acc.count < total) {
+                completion(nil)
+                return
+            }
+            self.collectBody(conn, already: acc, total: total, completion: completion)
+        }
     }
 
     private func relayResponse(_ conn: NWConnection, upstream: NWConnection,

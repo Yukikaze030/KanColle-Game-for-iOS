@@ -56,8 +56,9 @@ final class LocalProxyIntegrationTests: XCTestCase {
         return 0
     }
 
-    /// 连接 127.0.0.1:port，发送 request，累积接收直到 isComplete 或收到 marker。
-    private func roundTrip(port: UInt16, request: String, marker: String,
+    /// 连接 127.0.0.1:port，依次发送 chunks（可模拟分包到达），
+    /// 累积接收直到 isComplete 或收到 marker。
+    private func roundTrip(port: UInt16, chunks: [String], marker: String,
                            timeout: TimeInterval = 5) -> String? {
         let conn = NWConnection(host: "127.0.0.1", port: NWEndpoint.Port(rawValue: port)!, using: .tcp)
         let ready = expectation(description: "client ready")
@@ -67,7 +68,14 @@ final class LocalProxyIntegrationTests: XCTestCase {
         conn.start(queue: .global())
         wait(for: [ready], timeout: timeout)
 
-        conn.send(content: Data(request.utf8), completion: .contentProcessed { _ in })
+        // 串行发送，保证分包边界
+        func sendChunks(_ rest: ArraySlice<String>) {
+            guard let first = rest.first else { return }
+            conn.send(content: Data(first.utf8), completion: .contentProcessed { _ in
+                sendChunks(rest.dropFirst())
+            })
+        }
+        sendChunks(chunks[...])
         let received = Box(Data())
         let got = expectation(description: "got \(marker)")
         got.assertForOverFulfill = false
@@ -87,6 +95,11 @@ final class LocalProxyIntegrationTests: XCTestCase {
         wait(for: [got], timeout: timeout)
         conn.cancel()
         return String(data: received.value, encoding: .utf8)
+    }
+
+    private func roundTrip(port: UInt16, request: String, marker: String,
+                           timeout: TimeInterval = 5) -> String? {
+        roundTrip(port: port, chunks: [request], marker: marker, timeout: timeout)
     }
 
     // MARK: - Tests
@@ -171,5 +184,57 @@ final class LocalProxyIntegrationTests: XCTestCase {
         XCTAssertNotNil(response)
         XCTAssertTrue(response!.contains("cached"))
         XCTAssertEqual(upstreamCounter.value, 0, "短路响应不应触达上游")
+    }
+
+    func testPostBodyForwarding() throws {
+        // 上游：累积接收直到收满 body "hello=world"，记录完整请求后回 200
+        let upstreamCounter = Counter()
+        let upstreamReceived = Box(Data())
+        let upstream = try NWListener(using: .tcp, on: .any)
+        upstream.newConnectionHandler = { conn in
+            upstreamCounter.inc()
+            conn.start(queue: .global())
+            func recv() {
+                conn.receive(minimumIncompleteLength: 1, maximumLength: 64 * 1024) { data, _, isComplete, _ in
+                    var acc = upstreamReceived.value
+                    if let data { acc.append(data) }
+                    upstreamReceived.set(acc)
+                    if String(data: acc, encoding: .utf8)?.contains("hello=world") == true {
+                        conn.send(content: Data("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok".utf8),
+                                  completion: .contentProcessed { _ in conn.cancel() })
+                    } else if isComplete {
+                        conn.cancel()
+                    } else {
+                        recv()
+                    }
+                }
+            }
+            recv()
+        }
+        upstream.start(queue: .global())
+        defer { upstream.cancel() }
+        let upstreamPort = waitPort { upstream.port?.rawValue ?? 0 }
+        XCTAssertNotEqual(upstreamPort, 0)
+
+        let proxy = LocalProxyServer()
+        self.proxy = proxy
+        try proxy.start()
+        let proxyPort = waitPort { proxy.port }
+        XCTAssertNotEqual(proxyPort, 0)
+
+        // body 分两个包发送，验证代理按 Content-Length 收满后再转发
+        let head = "POST /kcsapi/api_start2/getData HTTP/1.1\r\nHost: 127.0.0.1:\(upstreamPort)\r\nContent-Type: application/x-www-form-urlencoded\r\nContent-Length: 11\r\n\r\n"
+        let response = roundTrip(
+            port: proxyPort,
+            chunks: [head + "hello=", "world"],
+            marker: "ok")
+        XCTAssertNotNil(response)
+        XCTAssertTrue(response!.contains("ok"))
+        XCTAssertEqual(upstreamCounter.value, 1)
+
+        let got = String(data: upstreamReceived.value, encoding: .utf8)
+        XCTAssertNotNil(got)
+        XCTAssertTrue(got!.contains("Content-Length: 11"), "转发应保留原始 Content-Length")
+        XCTAssertTrue(got!.hasSuffix("hello=world"), "上游收到的 body 必须完整，实际收到：\(got!)")
     }
 }

@@ -49,4 +49,18 @@ final class ProxyHTTPParserTests: XCTestCase {
         let raw = "CONNECT [::1]:443 HTTP/1.1\r\n\r\n"
         XCTAssertEqual(p.feed(Data(raw.utf8)), .invalid)
     }
+
+    func testLeftoverBytesAfterHead() {
+        var p = ProxyHTTPParser()
+        let raw = "POST /kcsapi/api_start2 HTTP/1.1\r\nHost: x.com\r\nContent-Length: 11\r\n\r\nhello=world"
+        guard case .request = p.feed(Data(raw.utf8)) else { return XCTFail() }
+        XCTAssertEqual(String(data: p.leftover, encoding: .utf8), "hello=world")
+    }
+
+    func testLeftoverEmptyWhenHeadEndsExactly() {
+        var p = ProxyHTTPParser()
+        let raw = "GET / HTTP/1.1\r\nHost: x.com\r\n\r\n"
+        guard case .request = p.feed(Data(raw.utf8)) else { return XCTFail() }
+        XCTAssertEqual(p.leftover.count, 0)
+    }
 }
