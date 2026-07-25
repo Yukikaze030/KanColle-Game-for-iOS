@@ -6,10 +6,24 @@ actor GameDataCoordinator {
     private var projector = TimerProjector()
     private let model: GameStateModel
     private let store: GameSnapshotStore?
+    private let notificationService: NotificationService
+    private let notificationSettings: NotificationPlanner.Settings
     private var generation: UInt64 = 0
 
-    init(model: GameStateModel) {
+    init(
+        model: GameStateModel,
+        notificationService: NotificationService,
+        settings: SettingsStore
+    ) {
         self.model = model
+        self.notificationService = notificationService
+        notificationSettings = .init(
+            expeditionEnabled: settings.expeditionNotificationsEnabled,
+            dockingEnabled: settings.dockingNotificationsEnabled,
+            moraleEnabled: settings.moraleNotificationsEnabled,
+            akashiEnabled: settings.akashiNotificationsEnabled,
+            leadTime: TimeInterval(settings.notificationLeadTimeSeconds)
+        )
         if let url = try? SharedContainer.snapshotDatabaseURL() {
             store = try? GameSnapshotStore(path: url.path)
         } else {
@@ -87,6 +101,10 @@ actor GameDataCoordinator {
                 timers: projection.timers
             )
             await model.publish(state: state, timers: projection.timers)
+            await notificationService.reconcile(
+                timers: projection.timers,
+                plannerSettings: notificationSettings
+            )
         } catch {
             let safeEndpoint = String(endpoint.prefix(160))
             await model.report("\(safeEndpoint)：\(error.localizedDescription)")

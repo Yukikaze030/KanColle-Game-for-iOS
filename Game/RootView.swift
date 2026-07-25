@@ -29,8 +29,13 @@ struct RootView: View {
     init() {
         let settings = SettingsStore()
         let gameStateModel = GameStateModel()
+        let notificationService = NotificationService()
         self.settings = settings
-        self.dataCoordinator = GameDataCoordinator(model: gameStateModel)
+        self.dataCoordinator = GameDataCoordinator(
+            model: gameStateModel,
+            notificationService: notificationService,
+            settings: settings
+        )
         _gameStateModel = State(initialValue: gameStateModel)
         _subtitleCoordinator = StateObject(
             wrappedValue: SubtitleCoordinator(settings: settings)

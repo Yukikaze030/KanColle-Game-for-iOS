@@ -3,7 +3,7 @@ import Foundation
 enum SharedContainer {
     static let appGroupIdentifier = "group.KanColle.Game.shared"
 
-    static func snapshotDatabaseURL() throws -> URL {
+    nonisolated static func snapshotDatabaseURL() throws -> URL {
         let fileManager = FileManager.default
         let base = fileManager.containerURL(
             forSecurityApplicationGroupIdentifier: appGroupIdentifier
