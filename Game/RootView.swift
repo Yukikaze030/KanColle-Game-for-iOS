@@ -14,6 +14,7 @@ struct RootView: View {
     @State private var showLogPanel = true
     // TODO(任务6后清理)：Spike 连接器选择（点击后才启动代理并加载对应 URL）
     @State private var selectedConnector: BrowserConstants.Connector?
+    @State private var showCertificateInstall = false
 
     var body: some View {
         Group {
@@ -59,6 +60,12 @@ struct RootView: View {
                         .foregroundStyle(.white)
                         .clipShape(Capsule())
                     }
+                    Button {
+                        showCertificateInstall = true
+                    } label: {
+                        Label("安装游戏加速证书", systemImage: "checkmark.shield")
+                    }
+                    .buttonStyle(.bordered)
                 }
             case .starting:
                 ProgressView("启动代理…")
@@ -74,6 +81,11 @@ struct RootView: View {
                   let raw = UserDefaults.standard.string(forKey: "SpikeConnector"),
                   let connector = BrowserConstants.Connector(rawValue: raw) else { return }
             selectConnector(connector)
+        }
+        .sheet(isPresented: $showCertificateInstall) {
+            NavigationStack {
+                CertificateInstallView()
+            }
         }
     }
 

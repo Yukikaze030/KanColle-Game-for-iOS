@@ -50,6 +50,13 @@ public struct SettingsStore {
         set { defaults.set(newValue, forKey: "pref_legacy_renderer") }
     }
 
+    /// Enables HTTPS inspection for game-server hosts after the local root CA
+    /// has been installed and explicitly trusted by the user.
+    public var mitmEnabled: Bool {
+        get { defaults.object(forKey: "pref_mitm_enabled") as? Bool ?? true }
+        set { defaults.set(newValue, forKey: "pref_mitm_enabled") }
+    }
+
     public var subtitleLocale: String {
         get { defaults.string(forKey: "pref_subtitle_locale") ?? "scn" }
         set { defaults.set(newValue, forKey: "pref_subtitle_locale") }

@@ -19,6 +19,7 @@ final class SettingsStoreTests: XCTestCase {
         XCTAssertEqual(s.subtitleFontSize, 18)
         XCTAssertEqual(s.cursorMode, .touch)
         XCTAssertTrue(s.legacyRenderer)
+        XCTAssertTrue(s.mitmEnabled)
         XCTAssertTrue(s.downloadRetry)
         XCTAssertTrue(s.memoryWarnEnabled)
         XCTAssertEqual(s.alterGadgetEndpoint, BrowserConstants.defaultAlterGadgetURL)
@@ -28,9 +29,11 @@ final class SettingsStoreTests: XCTestCase {
         var s = SettingsStore(defaults: d)
         s.connector = .ooi
         s.silentStart = true
+        s.mitmEnabled = false
         let s2 = SettingsStore(defaults: d)
         XCTAssertEqual(s2.connector, .ooi)
         XCTAssertTrue(s2.silentStart)
+        XCTAssertFalse(s2.mitmEnabled)
     }
     func testBlockRulesPorted() {
         XCTAssertTrue(BrowserConstants.blockRules.contains("doubleclick.net"))
