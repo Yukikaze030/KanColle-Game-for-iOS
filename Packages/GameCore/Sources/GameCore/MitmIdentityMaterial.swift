@@ -13,6 +13,7 @@ public final class MitmIdentityMaterial {
         case invalidLeafCertificate(host: String)
         case invalidPrivateKey(host: String, errorCode: Int?)
         case invalidRootCertificate(host: String)
+        case leafNotSignedByRoot(host: String)
         case publicKeyExtractionFailed(host: String)
         case privateKeyDoesNotMatchLeafCertificate(host: String)
         case identityCreationFailed(host: String)
@@ -76,6 +77,12 @@ public final class MitmIdentityMaterial {
             throw MaterialError.invalidRootCertificate(host: host)
         }
 
+        try Self.validate(
+            leafCertificate: leafCertificate,
+            rootCertificate: rootCertificate,
+            host: host
+        )
+
         let keyAttributes: [CFString: Any] = [
             kSecAttrKeyType: kSecAttrKeyTypeRSA,
             kSecAttrKeyClass: kSecAttrKeyClassPrivate,
@@ -128,5 +135,33 @@ public final class MitmIdentityMaterial {
         self.identity = identity
         self.rootCertificate = rootCertificate
         certificateChain = [identity, rootCertificate] as CFArray
+    }
+
+    private static func validate(
+        leafCertificate: SecCertificate,
+        rootCertificate: SecCertificate,
+        host: String
+    ) throws {
+        let policy = SecPolicyCreateSSL(true, host as CFString)
+        var optionalTrust: SecTrust?
+        guard SecTrustCreateWithCertificates(
+            leafCertificate,
+            policy,
+            &optionalTrust
+        ) == errSecSuccess,
+              let trust = optionalTrust,
+              SecTrustSetAnchorCertificates(
+                  trust,
+                  [rootCertificate] as CFArray
+              ) == errSecSuccess,
+              SecTrustSetAnchorCertificatesOnly(trust, true) == errSecSuccess
+        else {
+            throw MaterialError.leafNotSignedByRoot(host: host)
+        }
+
+        var trustError: CFError?
+        guard SecTrustEvaluateWithError(trust, &trustError) else {
+            throw MaterialError.leafNotSignedByRoot(host: host)
+        }
     }
 }

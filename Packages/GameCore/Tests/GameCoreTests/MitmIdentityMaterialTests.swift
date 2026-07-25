@@ -149,8 +149,50 @@ final class MitmIdentityMaterialTests: XCTestCase {
         }
     }
 
-    func testSameHostMaterialsCanConfigureSecureTransport() throws {
+    func testRejectsLeafWhenRootBelongsToAnotherCertificateAuthority() throws {
         let host = "w03g.kancolle-server.com"
+        let issuingCA = makeCA()
+        let unrelatedCA = makeCA()
+        let issued = try issuingCA.issueCertificate(forHost: host)
+
+        XCTAssertThrowsError(
+            try MitmIdentityMaterial(
+                host: host,
+                leafCertificateDER: issued.certificateDER,
+                privateKeyDER: issued.privateKeyDER,
+                rootCertificateDER: unrelatedCA.rootCertificateDER()
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? MitmIdentityMaterial.MaterialError,
+                .leafNotSignedByRoot(host: host)
+            )
+        }
+    }
+
+    func testRejectsLeafWhenRequestedHostDoesNotMatchSAN() throws {
+        let certificateHost = "w04g.kancolle-server.com"
+        let requestedHost = "w05g.kancolle-server.com"
+        let ca = makeCA()
+        let issued = try ca.issueCertificate(forHost: certificateHost)
+
+        XCTAssertThrowsError(
+            try MitmIdentityMaterial(
+                host: requestedHost,
+                leafCertificateDER: issued.certificateDER,
+                privateKeyDER: issued.privateKeyDER,
+                rootCertificateDER: ca.rootCertificateDER()
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? MitmIdentityMaterial.MaterialError,
+                .leafNotSignedByRoot(host: requestedHost)
+            )
+        }
+    }
+
+    func testSameHostMaterialsCanConfigureSecureTransport() throws {
+        let host = "w06g.kancolle-server.com"
         let ca = makeCA()
         let first = try MitmIdentityMaterial(
             host: host,
