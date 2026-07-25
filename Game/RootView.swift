@@ -95,6 +95,7 @@ struct RootView: View {
         selectedConnector = connector
         var settings = SettingsStore()
         settings.connector = connector
+        proxy.mitmCA = settings.mitmEnabled ? MitmCA() : nil
         proxyState = .starting
         installSpikeProbes()
         try? proxy.start()
