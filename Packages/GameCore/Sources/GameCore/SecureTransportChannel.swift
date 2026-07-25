@@ -6,6 +6,7 @@ private final class SecureTransportMemoryBIO {
     private var encryptedInput = Data()
     private var inputOffset = 0
     private var encryptedOutput = Data()
+    private var outputOffset = 0
 
     let outputHighWatermark: Int
     var inputEOF = false
@@ -20,11 +21,11 @@ private final class SecureTransportMemoryBIO {
     }
 
     var outputCount: Int {
-        encryptedOutput.count
+        encryptedOutput.count - outputOffset
     }
 
     var outputCapacity: Int {
-        max(0, outputHighWatermark - encryptedOutput.count)
+        max(0, outputHighWatermark - outputCount)
     }
 
     func appendInput(_ data: Data) {
@@ -55,7 +56,7 @@ private final class SecureTransportMemoryBIO {
         guard !outputClosed, maximumLength > 0 else {
             return 0
         }
-        let capacity = max(0, outputHighWatermark - encryptedOutput.count)
+        let capacity = outputCapacity
         let accepted = min(maximumLength, capacity)
         if accepted > 0 {
             encryptedOutput.append(
@@ -67,12 +68,18 @@ private final class SecureTransportMemoryBIO {
     }
 
     func drainOutput(maximumLength: Int) -> Data {
-        let count = min(maximumLength, encryptedOutput.count)
+        let count = min(maximumLength, outputCount)
         guard count > 0 else {
             return Data()
         }
-        let result = Data(encryptedOutput.prefix(count))
-        encryptedOutput.removeFirst(count)
+        let start = encryptedOutput.index(
+            encryptedOutput.startIndex,
+            offsetBy: outputOffset
+        )
+        let end = encryptedOutput.index(start, offsetBy: count)
+        let result = Data(encryptedOutput[start..<end])
+        outputOffset += count
+        compactOutputIfNeeded()
         return result
     }
 
@@ -83,6 +90,18 @@ private final class SecureTransportMemoryBIO {
         } else if inputOffset >= 64 * 1024, inputOffset * 2 >= encryptedInput.count {
             encryptedInput.removeFirst(inputOffset)
             inputOffset = 0
+        }
+    }
+
+    private func compactOutputIfNeeded() {
+        if outputOffset == encryptedOutput.count {
+            encryptedOutput.removeAll(keepingCapacity: true)
+            outputOffset = 0
+        } else if outputOffset >= 64 * 1024,
+                  outputOffset * 2 >= encryptedOutput.count
+        {
+            encryptedOutput.removeFirst(outputOffset)
+            outputOffset = 0
         }
     }
 }
@@ -138,6 +157,16 @@ private let secureTransportWriteCallback: SSLWriteFunc = {
 /// execution context. SecureTransport invokes the BIO callbacks synchronously
 /// within these methods, so the queues require no locks.
 public final class SecureTransportChannel {
+    /// Minimum ciphertext capacity required to hold one complete TLS 1.2
+    /// record, including the protocol's maximum record expansion allowance.
+    ///
+    /// TLS 1.2 permits 16 KiB plaintext records plus up to 2 KiB expansion,
+    /// including CBC padding and SHA-384 MAC data. 32 KiB stays well above
+    /// that complete-record bound and prevents a permanently partial BIO write.
+    public static let minimumOutputHighWatermark = 32 * 1024
+    private static let maximumTLS12PlaintextRecordLength = 16 * 1024
+    private static let maximumTLS12RecordExpansion = 2 * 1024
+
     public enum State: Equatable {
         case handshaking
         case open
@@ -182,7 +211,9 @@ public final class SecureTransportChannel {
         outputHighWatermark: Int = 512 * 1024,
         encryptedInputHighWatermark: Int = 1024 * 1024
     ) throws {
-        guard outputHighWatermark > 64, encryptedInputHighWatermark > 0 else {
+        guard outputHighWatermark >= Self.minimumOutputHighWatermark,
+              encryptedInputHighWatermark > 0
+        else {
             throw ChannelError.invalidConfiguration
         }
         guard let context = SSLCreateContext(nil, .serverSide, .streamType) else {
@@ -313,11 +344,15 @@ public final class SecureTransportChannel {
         }
 
         // SecureTransport can report all plaintext as processed even when its
-        // write callback accepted only part of the resulting TLS record. Bound
-        // the plaintext passed into SSLWrite so accepted bytes always reflect
-        // the caller-visible output capacity. TLS 1.2 record overhead is below
-        // this conservative reserve for the supported cipher suites.
-        let writablePlaintext = min(data.count, max(0, bio.outputCapacity - 64))
+        // write callback accepted only part of the resulting TLS record. RFC
+        // 5246 permits 16 KiB plaintext plus 2 KiB record expansion. Limit one
+        // SSLWrite to a single complete record and reserve the full expansion,
+        // including CBC padding and SHA-384 MACs, before entering the engine.
+        let writablePlaintext = min(
+            data.count,
+            Self.maximumTLS12PlaintextRecordLength,
+            max(0, bio.outputCapacity - Self.maximumTLS12RecordExpansion)
+        )
         guard writablePlaintext > 0 else {
             return 0
         }

@@ -334,9 +334,24 @@ final class SecureTransportChannelTests: XCTestCase {
         XCTAssertEqual(result, request)
     }
 
-    func testOutputHighWatermarkCausesPartialWriteAndResumesAfterDrain() throws {
-        let pair = try makePair(outputHighWatermark: 2_048)
-        try handshake(pair)
+    func testOutputHighWatermarkBelowFullTLSRecordAllowanceIsRejected() throws {
+        XCTAssertThrowsError(
+            try makePair(
+                outputHighWatermark:
+                    SecureTransportChannel.minimumOutputHighWatermark - 1
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? SecureTransportChannel.ChannelError,
+                .invalidConfiguration
+            )
+        }
+    }
+
+    func testMinimumOutputHighWatermarkHandlesFragmentedHandshakeAndPartialWrites() throws {
+        let minimum = SecureTransportChannel.minimumOutputHighWatermark
+        let pair = try makePair(outputHighWatermark: minimum)
+        try handshake(pair, clientFragment: 1, serverFragment: 257)
         _ = pair.server.drainEncryptedOutput()
 
         let payload = Data(repeating: 0x5A, count: 64 * 1024)
@@ -351,7 +366,10 @@ final class SecureTransportChannelTests: XCTestCase {
                 sawPartialWrite = true
             }
             offset += accepted
-            XCTAssertLessThanOrEqual(pair.server.bufferedEncryptedOutputBytes, 2_048)
+            XCTAssertLessThanOrEqual(
+                pair.server.bufferedEncryptedOutputBytes,
+                minimum
+            )
 
             let encrypted = pair.server.drainEncryptedOutput(maxLength: 257)
             if !encrypted.isEmpty {
