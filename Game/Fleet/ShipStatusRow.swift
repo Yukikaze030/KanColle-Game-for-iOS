@@ -4,10 +4,12 @@ import GameCore
 struct ShipStatusRow: View {
     let ship: UserShip
     let name: String
+    let warning: FleetShipWarning?
 
-    init(ship: UserShip, name: String) {
+    init(ship: UserShip, name: String, warning: FleetShipWarning? = nil) {
         self.ship = ship
         self.name = name
+        self.warning = warning
     }
 
     private var hpFraction: Double {
@@ -26,9 +28,18 @@ struct ShipStatusRow: View {
     }
 
     private var statusColor: Color {
-        if ship.isHeavilyDamaged { return .red }
+        if warning?.heavyDamage == .heavyWithoutDamecon { return .red }
+        if warning?.heavyDamage == .heavyWithDamecon { return .orange }
         if hpFraction <= 0.5 { return .orange }
         return .green
+    }
+
+    private var statusText: String {
+        if warning?.isInRepairDock == true { return "入渠中" }
+        if warning?.heavyDamage == .heavyWithoutDamecon { return "大破·无损管" }
+        if warning?.heavyDamage == .heavyWithDamecon { return "大破·有损管" }
+        if warning?.supply == .notSupplied { return "未补给" }
+        return "HP \(ship.currentHP)/\(ship.maximumHP)"
     }
 
     var body: some View {
@@ -55,7 +66,7 @@ struct ShipStatusRow: View {
             Spacer(minLength: 4)
 
             VStack(alignment: .trailing, spacing: 2) {
-                Text(ship.isHeavilyDamaged ? "大破" : "HP \(ship.currentHP)/\(ship.maximumHP)")
+                Text(statusText)
                     .font(.caption.weight(.bold).monospacedDigit())
                     .foregroundStyle(statusColor)
                 Text("\(conditionLabel) · \(ship.condition)")
@@ -75,6 +86,6 @@ struct ShipStatusRow: View {
             }
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(name)，等级 \(ship.level)，\(ship.isHeavilyDamaged ? "大破" : "生命值 \(ship.currentHP) / \(ship.maximumHP)")，\(conditionLabel) \(ship.condition)")
+        .accessibilityLabel("\(name)，等级 \(ship.level)，\(statusText)，\(conditionLabel) \(ship.condition)")
     }
 }

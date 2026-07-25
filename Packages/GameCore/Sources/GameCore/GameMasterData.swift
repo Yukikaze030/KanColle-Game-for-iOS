@@ -7,6 +7,8 @@ public struct MasterShip: Codable, Sendable, Equatable {
     public let nextShipID: Int?
     public let speed: Int?
     public let slotCount: Int?
+    public let fuelMaximum: Int?
+    public let ammunitionMaximum: Int?
 }
 
 public struct MasterSlotItem: Codable, Sendable, Equatable {
@@ -85,7 +87,9 @@ public struct GameMasterData: Codable, Sendable, Equatable {
             shipTypeID: object.int("api_stype") ?? 0,
             nextShipID: object.int("api_aftershipid"),
             speed: object.int("api_soku"),
-            slotCount: object.int("api_slot_num")
+            slotCount: object.int("api_slot_num"),
+            fuelMaximum: object.int("api_fuel_max"),
+            ammunitionMaximum: object.int("api_bull_max")
         )
     }
 

@@ -5,14 +5,55 @@ struct FleetCardView: View {
     let deck: FleetDeck
     let ships: [UserShip]
     let masterData: GameMasterData
+    let userItems: [Int: UserSlotItem]
+    let repairingShipIDs: Set<Int>
 
-    init(deck: FleetDeck, ships: [UserShip], masterData: GameMasterData) {
+    init(
+        deck: FleetDeck,
+        ships: [UserShip],
+        masterData: GameMasterData,
+        userItems: [Int: UserSlotItem],
+        repairingShipIDs: Set<Int>
+    ) {
         self.deck = deck
         self.ships = ships
         self.masterData = masterData
+        self.userItems = userItems
+        self.repairingShipIDs = repairingShipIDs
     }
 
-    private var damagedShips: [UserShip] { ships.filter(\.isHeavilyDamaged) }
+    private var warnings: FleetWarningResult {
+        FleetWarningEvaluator.evaluate(
+            ships: ships.map {
+                FleetWarningShip(
+                    id: $0.id,
+                    masterShipID: $0.masterShipID,
+                    level: $0.level,
+                    currentHP: $0.currentHP,
+                    maximumHP: $0.maximumHP,
+                    isLocked: $0.locked,
+                    fuel: $0.fuel,
+                    ammunition: $0.ammunition,
+                    slotItemIDs: $0.slotItemIDs,
+                    extraSlotItemID: $0.extraSlotItemID
+                )
+            },
+            items: Dictionary(uniqueKeysWithValues: userItems.values.compactMap { item in
+                guard let category = masterData.slotItems[item.masterSlotItemID]?.category else {
+                    return nil
+                }
+                return (item.id, FleetWarningItem(id: item.id, category: category, isLocked: item.locked))
+            }),
+            masterShips: Dictionary(uniqueKeysWithValues: masterData.ships.values.map {
+                ($0.id, FleetWarningMasterShip(
+                    id: $0.id,
+                    fuelMaximum: $0.fuelMaximum,
+                    ammunitionMaximum: $0.ammunitionMaximum
+                ))
+            }),
+            repairingShipIDs: repairingShipIDs
+        )
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -30,10 +71,19 @@ struct FleetCardView: View {
                 }
             }
 
-            if !damagedShips.isEmpty {
+            if warnings.hasUnsafeHeavyDamage {
                 FleetWarningBanner(
-                    title: "大破警告",
-                    detail: damagedShips.map(shipName).joined(separator: "、")
+                    title: "大破且无损管",
+                    detail: ships.filter { ship in
+                        warnings.ships.first(where: { $0.shipID == ship.id })?.heavyDamage
+                            == .heavyWithoutDamecon
+                    }.map(shipName).joined(separator: "、")
+                )
+            } else if warnings.hasAnyHeavyDamage {
+                FleetWarningBanner(
+                    title: "大破（已装备损管）",
+                    detail: "出击前仍请确认装备与舰队状态。",
+                    tint: .orange
                 )
             }
 
@@ -45,7 +95,11 @@ struct FleetCardView: View {
             } else {
                 LazyVStack(spacing: 6) {
                     ForEach(ships, id: \.id) { ship in
-                        ShipStatusRow(ship: ship, name: shipName(ship))
+                        ShipStatusRow(
+                            ship: ship,
+                            name: shipName(ship),
+                            warning: warnings.ships.first { $0.shipID == ship.id }
+                        )
                     }
                 }
             }

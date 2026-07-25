@@ -169,7 +169,11 @@ struct FleetOverlayView: View {
             FleetCardView(
                 deck: deck,
                 ships: gameState.fleet.ships(inDeck: deckID),
-                masterData: gameState.master
+                masterData: gameState.master,
+                userItems: gameState.fleet.slotItems,
+                repairingShipIDs: Set(
+                    gameState.fleet.repairDocks.values.compactMap(\.shipID)
+                )
             )
         } else {
             emptyState
