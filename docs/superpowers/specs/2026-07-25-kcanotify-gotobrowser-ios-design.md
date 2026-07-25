@@ -135,7 +135,7 @@ HTTPS 下本地代理看不到内容（只能看到 CONNECT 目标），因此�
 | **P1 浏览器核心** | 连接器/登录/地区绕行、资源缓存、gadget 绕行、静音、截图、触摸补丁、字幕、白屏恢复 + 内存监测、悬浮球框架、设置页 | GotoBrowser 核心（ResourceProcess / WebViewManager / BrowserActivity / Subtitle 包） |
 | **P2 基础工具** | DataPipeline、舰队视图（索敌/制空/士气/大破警告）、远征/入渠/士气/明石本地推送、WidgetKit 小组件 | KcaService / KcaApiData / KcaDeckInfo / KcaAlarmService |
 | **P3 战斗与任务** | 战斗预测（BattleEngine + 战斗画面）、海域血条/陆航面板、任务视图（翻译 + 进度追踪） | KcaBattle / KcaBattleViewService / KcaQuestTracker（约 5600 行，最大工程） |
-| **P4 其余工具** | 明石改修工厂、舰娘/装备列表、经验计算器、远征一览、掉落/资源日志（图表）、建造/开发结果、数据备份恢复、妖精皮肤下载、poi 上报 | kcanotify 其余模块 |
+| **P4 其余工具** | 明石改修工厂、舰娘/装备列表、经验计算器、远征一览、掉落/资源日志（图表）、建造/开发结果、数据备份恢复、妖精皮肤下载、poi 上报、游戏 Mod（FPS 解锁、暴击显示、KCCP 翻译补丁、Kantai3D） | kcanotify 其余模块、GotoBrowser Mod（Helpers/ 包） |
 
 每阶段交付可用产品，后续阶段不破坏前阶段功能。实现计划按阶段分别制定：本规格批准后首先为 P1 编写实现计划，P2–P4 的计划在前一阶段完成后编写。
 
