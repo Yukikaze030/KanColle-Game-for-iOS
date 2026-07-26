@@ -95,14 +95,15 @@ public struct BattleSessionReducer: Sendable {
     public init(
         snapshot: BattleSnapshot? = nil,
         decoder: BattlePhaseDecoder = BattlePhaseDecoder(),
-        damageEngine: DamageEngine = DamageEngine()
+        damageEngine: DamageEngine = DamageEngine(),
+        initialRevision: Int64? = nil
     ) {
         self.snapshot = snapshot
         self.decoder = decoder
         self.damageEngine = damageEngine
         transitions = []
         appliedResponseIDs = []
-        revision = snapshot?.revision ?? 0
+        revision = max(snapshot?.revision ?? 0, initialRevision ?? 0)
     }
 
     @discardableResult

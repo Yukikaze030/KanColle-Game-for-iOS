@@ -122,6 +122,18 @@ struct RootView: View {
                 timers: gameStateModel.timers,
                 onClose: { presentedDestination = nil }
             )
+        } else if destination == .battle {
+            BattleOverlayView(
+                snapshot: gameStateModel.battle,
+                logs: gameStateModel.battleLogs,
+                result: gameStateModel.battleResult,
+                shipNames: Dictionary(
+                    uniqueKeysWithValues: gameStateModel.state.master.ships.map {
+                        ($0.key, $0.value.name)
+                    }
+                ),
+                onClose: { presentedDestination = nil }
+            )
         } else {
             NavigationStack {
                 Group {

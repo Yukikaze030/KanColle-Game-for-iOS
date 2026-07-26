@@ -2,12 +2,31 @@ import Foundation
 import GameCore
 
 actor GameDataCoordinator {
+    private let parser = APIEnvelopeParser()
     private let pipeline = GameDataPipeline()
     private var projector = TimerProjector()
+    private var battleReducer = BattleSessionReducer()
+    private let battleDecoder = BattlePhaseDecoder()
+    private let rankPredictor = BattleRankPredictor()
+    private let resultMerger = BattleResultMerger()
+    private let logProjector = BattleLogProjector()
+    private let questRouter = QuestEventRouter()
+    private let questDefinitions: QuestDefinitionStore?
+    private var questReducer: QuestProgressReducer?
+    private var questSnapshot = QuestListSnapshot()
+    private var battleLogs: [BattleLogEntry] = []
+    private var battleResult: BattleResultMerge?
+    private var currentMap: BattleMapPosition?
+    private var battleStartedAt: Date?
+    private var questRevision: Int64 = 0
     private let model: GameStateModel
     private let store: GameSnapshotStore?
+    private let p3Store: P3SnapshotStore?
+    private let p3DatabaseURL: URL?
     private let notificationService: NotificationService
     private let notificationSettings: NotificationPlanner.Settings
+    private let battleLogRetentionCount: Int
+    private let exactQuestTrackingEnabled: Bool
     private var generation: UInt64 = 0
 
     init(
@@ -17,6 +36,11 @@ actor GameDataCoordinator {
     ) {
         self.model = model
         self.notificationService = notificationService
+        battleLogRetentionCount = settings.battleLogRetentionCount
+        exactQuestTrackingEnabled = settings.exactQuestTrackingEnabled
+        let definitions = Self.loadQuestDefinitions()
+        questDefinitions = definitions
+        questReducer = definitions.map { QuestProgressReducer(definitions: $0.definitions) }
         notificationSettings = .init(
             expeditionEnabled: settings.expeditionNotificationsEnabled,
             dockingEnabled: settings.dockingNotificationsEnabled,
@@ -29,6 +53,13 @@ actor GameDataCoordinator {
         } else {
             store = nil
         }
+        if let url = try? SharedContainer.p3DatabaseURL() {
+            p3DatabaseURL = url
+            p3Store = try? P3SnapshotStore(path: url.path)
+        } else {
+            p3DatabaseURL = nil
+            p3Store = nil
+        }
     }
 
     @discardableResult
@@ -37,6 +68,14 @@ actor GameDataCoordinator {
         let currentGeneration = generation
         await pipeline.reset()
         projector = TimerProjector()
+        battleReducer = BattleSessionReducer()
+        questReducer = questDefinitions.map { QuestProgressReducer(definitions: $0.definitions) }
+        questSnapshot = QuestListSnapshot()
+        battleLogs = []
+        battleResult = nil
+        currentMap = nil
+        battleStartedAt = nil
+        questRevision = 0
 
         do {
             if let restored: RestoredGameSnapshot<GameDataState> = try store?.restore(
@@ -53,6 +92,26 @@ actor GameDataCoordinator {
                     stale: restored.isStale
                 )
             }
+            if let restored = try p3Store?.restore() {
+                guard currentGeneration == generation else { return currentGeneration }
+                questSnapshot = restored.quests
+                questRevision = restored.questRevision
+                battleLogs = restored.battleLogs
+                let restoredBattle = restored.currentBattle?.snapshot
+                battleReducer = BattleSessionReducer(
+                    snapshot: restoredBattle,
+                    initialRevision: restored.battleRevision
+                )
+                await model.publishP3(
+                    battle: restoredBattle,
+                    battleResult: nil,
+                    battleLogs: battleLogs,
+                    quests: questSnapshot,
+                    battleRevision: restored.battleRevision,
+                    questRevision: questRevision,
+                    recoveryIssues: restored.recoveryIssues
+                )
+            }
         } catch {
             await model.report("快照恢复失败：\(error.localizedDescription)")
         }
@@ -63,6 +122,11 @@ actor GameDataCoordinator {
         generation &+= 1
         await pipeline.reset()
         projector = TimerProjector()
+        battleReducer = BattleSessionReducer()
+        questReducer?.resetDeduplication()
+        currentMap = nil
+        battleStartedAt = nil
+        battleResult = nil
         await model.clearSessionPresentation()
     }
 
@@ -78,37 +142,299 @@ actor GameDataCoordinator {
         let eventID = Self.eventID(endpoint: endpoint, request: request, response: response)
 
         do {
-            let before = await pipeline.state().revision
-            let event = try await pipeline.ingest(
+            let envelope = try parser.parse(
                 endpoint: endpoint,
                 response: responseData,
-                requestBody: requestData,
-                eventID: eventID
+                requestBody: requestData
             )
+            let beforeState = await pipeline.state()
+            let event = await pipeline.ingest(envelope: envelope, eventID: eventID)
             guard session == generation else { return }
             let state = await pipeline.state()
-            guard state.revision > before else {
-                if case .incrementalUpdated(_, let warnings) = event, !warnings.isEmpty {
-                    await model.report(warnings.joined(separator: "；"))
-                }
-                return
+            let p2Changed = state.revision > beforeState.revision
+            if case .incrementalUpdated(_, let warnings) = event, !warnings.isEmpty {
+                await model.report(warnings.joined(separator: "；"))
             }
 
             let projection = projector.project(Self.timerInput(from: state))
-            try store?.save(
-                state: state,
-                revision: state.revision,
-                timers: projection.timers
+            if p2Changed {
+                try store?.save(
+                    state: state,
+                    revision: state.revision,
+                    timers: projection.timers
+                )
+            }
+
+            let p3Before = (battleReducer.snapshot?.revision ?? 0, questRevision)
+            try reduceP3(
+                envelope: envelope,
+                eventID: eventID,
+                occurredAt: Date(),
+                fleetBefore: beforeState.fleet,
+                master: state.master
             )
-            await model.publish(state: state, timers: projection.timers)
-            await notificationService.reconcile(
-                timers: projection.timers,
-                plannerSettings: notificationSettings
-            )
+            let battleRevision = battleReducer.snapshot?.revision
+                ?? battleLogs.first.map { _ in p3Before.0 } ?? 0
+            let p3Changed = battleRevision != p3Before.0 || questRevision != p3Before.1
+            if p3Changed {
+                try p3Store?.save(
+                    quests: questSnapshot,
+                    questRevision: questRevision,
+                    currentBattle: battleReducer.snapshot,
+                    battleRevision: battleRevision,
+                    battleLogs: battleLogs
+                )
+                let databaseURL = p3DatabaseURL
+                Task { @MainActor in
+                    DiagnosticsStore.shared.updateP3DatabaseSize(at: databaseURL)
+                }
+            }
+
+            if p2Changed || p3Changed {
+                await model.publishCombined(
+                    state: state,
+                    timers: projection.timers,
+                    battle: battleReducer.snapshot,
+                    battleResult: battleResult,
+                    battleLogs: battleLogs,
+                    quests: questSnapshot,
+                    battleRevision: battleRevision,
+                    questRevision: questRevision
+                )
+            }
+            if p2Changed {
+                await notificationService.reconcile(
+                    timers: projection.timers,
+                    plannerSettings: notificationSettings
+                )
+            }
         } catch {
             let safeEndpoint = String(endpoint.prefix(160))
             await model.report("\(safeEndpoint)：\(error.localizedDescription)")
         }
+    }
+
+    private func reduceP3(
+        envelope: APIEnvelope,
+        eventID: String,
+        occurredAt: Date,
+        fleetBefore: FleetSnapshot,
+        master: GameMasterData
+    ) throws {
+        if let map = battleDecoder.mapPosition(from: envelope) {
+            currentMap = map
+        }
+
+        var questChanged = false
+        if envelope.endpoint == "/api_get_member/questlist",
+           let data = envelope.data,
+           let questDefinitions {
+            let synchronized = try questDefinitions.synchronize(
+                apiData: data,
+                previous: questSnapshot,
+                at: occurredAt
+            )
+            questChanged = synchronized != questSnapshot
+            questSnapshot = synchronized
+        } else if let questDefinitions,
+                  let questID = envelope.requestParameters["api_quest_id"].flatMap(Int.init) {
+            let updated: QuestListSnapshot?
+            switch envelope.endpoint {
+            case "/api_req_quest/start":
+                updated = try? questDefinitions.start(questID: questID, in: questSnapshot, at: occurredAt)
+            case "/api_req_quest/stop":
+                updated = try? questDefinitions.stop(questID: questID, in: questSnapshot, at: occurredAt)
+            case "/api_req_quest/clearitemget":
+                updated = try? questDefinitions.clear(questID: questID, in: questSnapshot, at: occurredAt)
+            default:
+                updated = nil
+            }
+            if let updated {
+                questChanged = updated != questSnapshot
+                questSnapshot = updated
+            }
+        }
+
+        let deckID = currentMap?.deckID ?? envelope.requestParameters["api_deck_id"].flatMap(Int.init)
+        let mainIDs = deckID.flatMap { fleetBefore.decks[$0]?.shipIDs } ?? []
+        let escortIDs = fleetBefore.combinedFleetType > 0
+            ? (fleetBefore.decks[2]?.shipIDs ?? [])
+            : []
+        let reduction = battleReducer.reduce(
+            envelope: envelope,
+            eventID: eventID,
+            friendlyMainShipIDs: mainIDs,
+            friendlyEscortShipIDs: escortIDs,
+            map: currentMap,
+            fleetSnapshot: fleetBefore,
+            sortieDeckID: deckID
+        )
+        switch reduction {
+        case .started(let snapshot, _):
+            battleStartedAt = occurredAt
+            battleResult = nil
+            if let closed = battleReducer.lastClosedSession {
+                archive(closed, at: occurredAt, master: master)
+            }
+            if snapshot.warnings.isEmpty == false {
+                Task { @MainActor in
+                    DiagnosticsStore.shared.recordP3Warnings(snapshot.warnings.count)
+                }
+            }
+        case .continued(let snapshot, _):
+            if snapshot.warnings.isEmpty == false {
+                Task { @MainActor in
+                    DiagnosticsStore.shared.recordP3Warnings(snapshot.warnings.count)
+                }
+            }
+        case .completed(let snapshot):
+            let prediction = rankPredictor.predict(rankInput(from: snapshot))
+            battleResult = resultMerger.merge(data: envelope.data ?? .null, prediction: prediction)
+            if battleResult?.diagnostics.isEmpty == false {
+                Task { @MainActor in DiagnosticsStore.shared.recordRankMismatch() }
+            }
+            archive(snapshot, at: battleStartedAt ?? occurredAt, master: master)
+        case .rejected(_, let warnings):
+            if !warnings.isEmpty {
+                Task { @MainActor in DiagnosticsStore.shared.recordP3Warnings(warnings.count) }
+            }
+        case .duplicate, .ignored:
+            break
+        }
+
+        if exactQuestTrackingEnabled, let questReducer {
+            var mutableReducer = questReducer
+            for event in questRouter.routeAll(
+                envelope: envelope,
+                eventID: eventID,
+                occurredAt: occurredAt
+            ) {
+                if case .applied = mutableReducer.reduce(event, snapshot: &questSnapshot) {
+                    questChanged = true
+                }
+            }
+
+            if let conditional = conditionalQuestEvent(
+                envelope: envelope,
+                battleReduction: reduction,
+                fleetBefore: fleetBefore,
+                master: master
+            ) {
+                let flags = QuestSessionFlags(
+                    apDuplicationEnabled: questSnapshot.tracking[212]?.isActive == true
+                        && questSnapshot.tracking[218]?.isActive == true
+                )
+                if case .applied = mutableReducer.reduce(
+                    conditional,
+                    eventID: eventID + "#conditional",
+                    occurredAt: occurredAt,
+                    flags: flags,
+                    snapshot: &questSnapshot
+                ) {
+                    questChanged = true
+                }
+            }
+            self.questReducer = mutableReducer
+        }
+
+        if questChanged { questRevision &+= 1 }
+        let diagnosticEndpoint = envelope.endpoint
+        let diagnosticBattleRevision = battleReducer.snapshot?.revision ?? 0
+        let diagnosticQuestRevision = questRevision
+        Task { @MainActor in
+            DiagnosticsStore.shared.recordP3Endpoint(
+                diagnosticEndpoint,
+                battleRevision: diagnosticBattleRevision,
+                questRevision: diagnosticQuestRevision
+            )
+        }
+    }
+
+    private func conditionalQuestEvent(
+        envelope: APIEnvelope,
+        battleReduction: BattleSessionReduction,
+        fleetBefore: FleetSnapshot,
+        master: GameMasterData
+    ) -> QuestConditionalEvent? {
+        if envelope.endpoint == "/api_req_map/start" || envelope.endpoint == "/api_req_map/next",
+           let map = currentMap,
+           let world = map.mapAreaID,
+           let number = map.mapNumber,
+           let node = map.nodeID {
+            let deckID = map.deckID ?? envelope.requestParameters["api_deck_id"].flatMap(Int.init) ?? 1
+            let ships = fleetBefore.ships(inDeck: deckID).enumerated().map { index, ship in
+                QuestFleetShip(
+                    masterShipID: ship.masterShipID,
+                    shipType: master.ships[ship.masterShipID]?.shipTypeID,
+                    position: .init(component: .main, index: index)
+                )
+            }
+            return .nodeReached(.init(
+                world: world,
+                map: number,
+                node: node,
+                isStart: envelope.endpoint == "/api_req_map/start",
+                deck: ships
+            ))
+        }
+        guard case .completed(let snapshot) = battleReduction,
+              let rank = battleResult?.server.rank ?? battleResult?.prediction?.rank else {
+            return nil
+        }
+        let types = Dictionary(uniqueKeysWithValues: master.ships.map { ($0.key, $0.value.shipTypeID) })
+        return .battleCompleted(.init(snapshot: snapshot, rank: rank, masterShipTypes: types))
+    }
+
+    private func archive(_ snapshot: BattleSnapshot, at date: Date, master: GameMasterData) {
+        let enemyName = snapshot.enemyMain.ships.first?.masterShipID.flatMap { master.ships[$0]?.name }
+        let damecon = snapshot.dameconActivations.isEmpty
+            ? nil
+            : "损管发动 \(snapshot.dameconActivations.count) 次"
+        let entry = logProjector.project(
+            snapshot: snapshot,
+            startedAt: date,
+            enemyFleetName: enemyName,
+            prediction: battleResult?.prediction,
+            serverResult: battleResult?.server,
+            dameconSummary: damecon
+        )
+        battleLogs = logProjector.inserting(entry, into: battleLogs)
+        battleLogs = Array(battleLogs.prefix(battleLogRetentionCount))
+    }
+
+    private func rankInput(from snapshot: BattleSnapshot) -> BattleRankInput {
+        func fleet(_ state: BattleFleetState?) -> BattleRankFleetInput? {
+            guard let state else { return nil }
+            return .init(
+                initialHP: state.ships.map { Optional($0.initialHP) },
+                finalHP: state.ships.map { Optional($0.currentHP) },
+                escaped: Set(state.ships.enumerated().compactMap { $0.element.escaped ? $0.offset : nil })
+            )
+        }
+        return .init(
+            friendlyMain: fleet(snapshot.friendlyMain)!,
+            friendlyEscort: fleet(snapshot.friendlyEscort),
+            enemyMain: fleet(snapshot.enemyMain)!,
+            enemyEscort: fleet(snapshot.enemyEscort),
+            isLandAirDefense: snapshot.endpoint.known == .sortieLandAirBattle
+                || snapshot.endpoint.known == .combinedLandAirBattle,
+            isPractice: snapshot.kind == .practice
+        )
+    }
+
+    private static func loadQuestDefinitions() -> QuestDefinitionStore? {
+        guard let track = bundleData(named: "quest_track", ext: "json") else { return nil }
+        return try? QuestDefinitionStore(
+            trackData: track,
+            translationData: bundleData(named: "quests-scn", ext: "json")
+        )
+    }
+
+    private static func bundleData(named name: String, ext: String) -> Data? {
+        [
+            Bundle.main.url(forResource: name, withExtension: ext),
+            Bundle.main.url(forResource: name, withExtension: ext, subdirectory: "BundleAssets")
+        ].compactMap { $0 }.first.flatMap { try? Data(contentsOf: $0, options: .mappedIfSafe) }
     }
 
     private static func timerInput(from state: GameDataState) -> TimerProjectionInput {

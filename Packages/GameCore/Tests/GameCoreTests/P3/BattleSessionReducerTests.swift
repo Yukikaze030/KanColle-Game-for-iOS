@@ -126,6 +126,15 @@ final class BattleSessionReducerTests: XCTestCase {
         XCTAssertEqual(done.revision, 3)
     }
 
+    func testRestoredRevisionWithoutCurrentBattleNeverRegresses() throws {
+        var reducer = BattleSessionReducer(initialRevision: 41)
+        guard case let .started(snapshot, _) = reducer.reduce(
+            envelope: try fixture("normal_day", endpoint: "/api_req_sortie/battle"),
+            eventID: "after-restore"
+        ) else { return XCTFail("expected start") }
+        XCTAssertEqual(snapshot.revision, 42)
+    }
+
     private func fixture(_ name: String, endpoint: String) throws -> APIEnvelope {
         let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
             .appendingPathComponent("Fixtures/BattleSession/\(name).json")

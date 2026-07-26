@@ -70,6 +70,43 @@ public struct QuestDefinitionStore: Sendable {
         at date: Date
     ) throws -> QuestListSnapshot {
         let serverItems = try decodeServerList(from: apiListData)
+        return synchronize(serverItems: serverItems, previous: previous, at: date)
+    }
+
+    /// Envelope-native variant used by the unified pipeline. It avoids decoding
+    /// the raw response a second time after `APIEnvelopeParser` validated it.
+    public func synchronize(
+        apiData: JSONValue,
+        previous: QuestListSnapshot = QuestListSnapshot(),
+        at date: Date
+    ) throws -> QuestListSnapshot {
+        guard let list = apiData.objectValue?["api_list"]?.arrayValue else {
+            throw QuestDefinitionStoreError.invalidQuestList
+        }
+        let serverItems = try list.compactMap { value -> ServerItem? in
+            if value.intValue == -1 { return nil }
+            guard let object = value.objectValue,
+                  let id = object.int("api_no"), id > 0 else {
+                throw QuestDefinitionStoreError.invalidQuestList
+            }
+            return ServerItem(
+                id: id,
+                category: object.int("api_category") ?? 0,
+                type: object.int("api_type") ?? 0,
+                state: object.int("api_state") ?? 1,
+                progressFlag: object.int("api_progress_flag") ?? 0,
+                title: object["api_title"]?.stringValue ?? "",
+                detail: object["api_detail"]?.stringValue ?? ""
+            )
+        }
+        return synchronize(serverItems: serverItems, previous: previous, at: date)
+    }
+
+    private func synchronize(
+        serverItems: [ServerItem],
+        previous: QuestListSnapshot,
+        at date: Date
+    ) -> QuestListSnapshot {
         var snapshot = previous
 
         for server in serverItems {

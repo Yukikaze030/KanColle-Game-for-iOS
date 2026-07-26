@@ -130,6 +130,22 @@ final class QuestResetCalendarTests: XCTestCase {
         XCTAssertEqual(snapshot.tracking[9999]?.counters, [])
     }
 
+    func testEnvelopeNativeListSyncMatchesDataDecoder() throws {
+        let store = try makeStore()
+        let raw = fixture("questlist_sync.json")
+        let root = try JSONSerialization.jsonObject(with: raw) as! [String: Any]
+        let wrapped = try JSONSerialization.data(withJSONObject: [
+            "api_result": 1,
+            "api_data": root["api_data"] as Any
+        ])
+        let envelope = try APIEnvelopeParser().parse(endpoint: "/api_get_member/questlist", response: wrapped)
+        let date = date("2026-07-26T06:00:00+09:00")
+
+        let native = try store.synchronize(apiData: XCTUnwrap(envelope.data), at: date)
+        let legacy = try store.synchronize(apiListData: raw, at: date)
+        XCTAssertEqual(native, legacy)
+    }
+
     func testStartStopClearAndInitialCounterCompatibility() throws {
         let store = try makeStore()
         let now = date("2026-07-26T06:00:00+09:00")

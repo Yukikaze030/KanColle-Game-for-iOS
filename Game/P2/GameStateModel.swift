@@ -13,6 +13,13 @@ final class GameStateModel {
     private(set) var isRestored = false
     private(set) var isStale = false
     private(set) var lastError: String?
+    private(set) var battle: BattleSnapshot?
+    private(set) var battleResult: BattleResultMerge?
+    private(set) var battleLogs: [BattleLogEntry] = []
+    private(set) var quests = QuestListSnapshot()
+    private(set) var battleRevision: Int64 = 0
+    private(set) var questRevision: Int64 = 0
+    private(set) var p3RecoveryIssues: [P3RecoveryIssue] = []
 
     var hasFleetData: Bool { !state.fleet.decks.isEmpty }
 
@@ -34,9 +41,53 @@ final class GameStateModel {
         lastError = String(message.prefix(512))
     }
 
+    func publishP3(
+        battle: BattleSnapshot?,
+        battleResult: BattleResultMerge?,
+        battleLogs: [BattleLogEntry],
+        quests: QuestListSnapshot,
+        battleRevision: Int64,
+        questRevision: Int64,
+        recoveryIssues: [P3RecoveryIssue] = []
+    ) {
+        guard battleRevision >= self.battleRevision,
+              questRevision >= self.questRevision else { return }
+        self.battle = battle
+        self.battleResult = battleResult
+        self.battleLogs = Array(battleLogs.prefix(BattleLogProjector.maximumEntries))
+        self.quests = quests
+        self.battleRevision = battleRevision
+        self.questRevision = questRevision
+        self.p3RecoveryIssues = Array(recoveryIssues.prefix(20))
+    }
+
+    func publishCombined(
+        state: GameDataState,
+        timers: [GameTimer],
+        battle: BattleSnapshot?,
+        battleResult: BattleResultMerge?,
+        battleLogs: [BattleLogEntry],
+        quests: QuestListSnapshot,
+        battleRevision: Int64,
+        questRevision: Int64
+    ) {
+        publish(state: state, timers: timers)
+        publishP3(
+            battle: battle,
+            battleResult: battleResult,
+            battleLogs: battleLogs,
+            quests: quests,
+            battleRevision: battleRevision,
+            questRevision: questRevision
+        )
+    }
+
     func clearSessionPresentation() {
         isRestored = false
         isStale = false
         lastError = nil
+        battle = nil
+        battleResult = nil
+        p3RecoveryIssues = []
     }
 }
