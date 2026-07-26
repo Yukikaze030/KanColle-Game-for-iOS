@@ -20,11 +20,15 @@ struct GameView: View {
     @State private var isMuted: Bool
     @State private var isGameReady = false
     @State private var showsMemoryWarning = false
-    @State private var recoveryMessage: String?
-    @State private var recoveryPausedCount: Int?
+    @State private var recoveryRequired: RecoveryRequired?
     @State private var navigationError: String?
     @State private var browserGeneration = 0
     @State private var memoryMonitor: MemoryMonitor
+
+    private struct RecoveryRequired {
+        let terminationCount: Int
+        let switchedFromCanvasToWebGL: Bool
+    }
 
     init(url: URL,
          proxyPort: UInt16,
@@ -120,16 +124,6 @@ struct GameView: View {
                 }
             }
 
-            if let recoveryMessage {
-                Text(recoveryMessage)
-                    .font(.footnote.weight(.semibold))
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 9)
-                    .background(.ultraThinMaterial, in: Capsule())
-                    .frame(maxHeight: .infinity, alignment: .bottom)
-                    .padding(.bottom, 24)
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
-            }
         }
         .persistentSystemOverlays(.hidden)
         .statusBarHidden(isGameReady)
@@ -172,21 +166,24 @@ struct GameView: View {
                 )
             )
         }
-        .alert("页面自动恢复已暂停", isPresented: Binding(
-            get: { recoveryPausedCount != nil },
-            set: { if !$0 { recoveryPausedCount = nil } }
+        .alert("游戏页面进程已终止", isPresented: Binding(
+            get: { recoveryRequired != nil },
+            set: { if !$0 { recoveryRequired = nil } }
         )) {
-            Button("重建浏览器") {
-                recoveryPausedCount = nil
+            Button("稳定模式重建") {
+                recoveryRequired = nil
+                var writableSettings = settings
+                writableSettings.legacyRenderer = false
+                writableSettings.fpsUnlockEnabled = false
                 rebuildBrowser()
             }
             Button("退出游戏", role: .destructive) {
-                recoveryPausedCount = nil
+                recoveryRequired = nil
                 onExit()
             }
-            Button("取消", role: .cancel) {}
+            Button("暂不重载", role: .cancel) {}
         } message: {
-            Text("WebContent 在 5 分钟内已终止 \(recoveryPausedCount ?? 0) 次。为避免无限刷新，已停止自动恢复。建议关闭帧率解锁，或改用 WebGL 后重新进入游戏。")
+            Text(recoveryRequiredMessage)
         }
         .alert("网络或 SSL 加载失败", isPresented: Binding(
             get: { navigationError != nil },
@@ -256,19 +253,24 @@ struct GameView: View {
 
     private func handleRecovery(_ event: WebContentRecoveryEvent) {
         switch event {
-        case .automaticReload(let attempt, let switchedRenderer):
-            let rendererNote = switchedRenderer
-                ? "检测到 Canvas 页面进程终止，本次会话已切换为 WebGL。"
-                : "页面进程已终止，正在自动恢复（第 \(attempt) 次）。"
-            withAnimation { recoveryMessage = rendererNote }
-            Task {
-                try? await Task.sleep(for: .seconds(5))
-                withAnimation { recoveryMessage = nil }
-            }
-        case .automaticRecoveryPaused(let terminationCount):
-            recoveryMessage = nil
-            recoveryPausedCount = terminationCount
+        case .reloadRequired(let terminationCount, let switchedRenderer):
+            recoveryRequired = .init(
+                terminationCount: terminationCount,
+                switchedFromCanvasToWebGL: switchedRenderer
+            )
         }
+    }
+
+    private var recoveryRequiredMessage: String {
+        let rendererNote = recoveryRequired?.switchedFromCanvasToWebGL == true
+            ? "检测到 Canvas 会话，本次重建将改用 WebGL。"
+            : ""
+        return """
+        WebContent 已被系统终止，本地 JavaScript/Canvas 运行态在重载前就已经丢失。\
+        App 不会再自动刷新，以免无提示地离开当前进度。\
+        \(rendererNote)“稳定模式重建”还会关闭帧率解锁。\
+        这是本次会话第 \(recoveryRequired?.terminationCount ?? 1) 次终止。
+        """
     }
 
     private func rebuildBrowser() {

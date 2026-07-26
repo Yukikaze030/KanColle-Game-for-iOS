@@ -194,7 +194,7 @@ struct SettingsView: View {
         } header: {
             Text("浏览器")
         } footer: {
-            Text("Canvas 是兼容模式，对本游戏可能占用更多解码与绘图内存。页面进程终止后，本次会话会自动降级为 WebGL；帧率解锁也可能增加内存与渲染压力。修改后需重新进入游戏。")
+            Text("Canvas 是兼容模式，对本游戏可能占用更多解码与绘图内存。页面进程终止后不会自动刷新；可由提示切换 WebGL 并关闭帧率解锁后重建。修改渲染器后需重新进入游戏。")
         }
         .onChange(of: connector) { _, value in update { $0.connector = value } }
         .onChange(of: silentStart) { _, value in update { $0.silentStart = value } }
@@ -342,18 +342,6 @@ struct SettingsView: View {
             )
             LabeledContent("WebView 终止次数", value: "\(diagnostics.processTerminationCount)")
             LabeledContent("最近终止时间", value: formattedTerminationDate)
-            LabeledContent(
-                "自动恢复超限次数",
-                value: "\(diagnostics.recoveryLimitExceededCount)"
-            )
-            LabeledContent(
-                "最近超限时终止次数",
-                value: diagnostics.lastRecoveryLimitTerminationCount.map(String.init) ?? "无"
-            )
-            LabeledContent(
-                "最近恢复超限时间",
-                value: formattedDate(diagnostics.lastRecoveryLimitExceededAt)
-            )
             LabeledContent(
                 "Canvas → WebGL 降级次数",
                 value: "\(diagnostics.canvasToWebGLFallbackCount)"

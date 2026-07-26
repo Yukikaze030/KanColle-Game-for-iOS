@@ -4,8 +4,7 @@ import WebKit
 import GameCore
 
 enum WebContentRecoveryEvent: Equatable {
-    case automaticReload(attempt: Int, switchedFromCanvasToWebGL: Bool)
-    case automaticRecoveryPaused(terminationCount: Int)
+    case reloadRequired(terminationCount: Int, switchedFromCanvasToWebGL: Bool)
 }
 
 @MainActor
@@ -145,27 +144,20 @@ final class WebViewCoordinator: NSObject, WKNavigationDelegate, WKScriptMessageH
             webView.customUserAgent = BrowserConstants.userAgentDesktop
         }
 
-        guard terminationCount <= 3 else {
-            DiagnosticsStore.shared.recordRecoveryLimitExceeded(
-                terminationCount: terminationCount
-            )
-            onRecovery?(.automaticRecoveryPaused(terminationCount: terminationCount))
-            return
-        }
-
         if switchedRenderer {
             DiagnosticsStore.shared.recordCanvasToWebGLFallback()
         }
+        // The page's JavaScript/Canvas runtime has already disappeared with the
+        // WebContent process. Reloading here would silently navigate away from
+        // an in-progress sortie, so only clear disposable caches and let the
+        // player explicitly choose whether to rebuild the page.
+        controller.purgeVolatileCaches()
         onRecovery?(
-            .automaticReload(
-                attempt: terminationCount,
+            .reloadRequired(
+                terminationCount: terminationCount,
                 switchedFromCanvasToWebGL: switchedRenderer
             )
         )
-        let delay = min(Double(terminationCount - 1), 2)
-        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self, weak webView] in
-            self?.controller.purgeVolatileCaches { [weak webView] in webView?.reload() }
-        }
     }
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
         controller.navigationStarted(webView.url)
