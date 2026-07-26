@@ -1,0 +1,488 @@
+[
+  {
+    "questID": 226,
+    "world": 2,
+    "map": 1,
+    "node": 1,
+    "boss": true,
+    "rank": "B",
+    "fleet": [
+      {
+        "id": 1,
+        "type": 2
+      }
+    ],
+    "conditionIndex": 0
+  },
+  {
+    "questID": 229,
+    "world": 4,
+    "map": 1,
+    "node": 1,
+    "boss": true,
+    "rank": "B",
+    "fleet": [
+      {
+        "id": 1,
+        "type": 2
+      }
+    ],
+    "conditionIndex": 0
+  },
+  {
+    "questID": 241,
+    "world": 3,
+    "map": 3,
+    "node": 1,
+    "boss": true,
+    "rank": "B",
+    "fleet": [
+      {
+        "id": 1,
+        "type": 2
+      }
+    ],
+    "conditionIndex": 0
+  },
+  {
+    "questID": 242,
+    "world": 4,
+    "map": 4,
+    "node": 1,
+    "boss": true,
+    "rank": "A",
+    "fleet": [
+      {
+        "id": 1,
+        "type": 2
+      }
+    ],
+    "conditionIndex": 0
+  },
+  {
+    "questID": 243,
+    "world": 5,
+    "map": 2,
+    "node": 1,
+    "boss": true,
+    "rank": "S",
+    "fleet": [
+      {
+        "id": 1,
+        "type": 2
+      }
+    ],
+    "conditionIndex": 0
+  },
+  {
+    "questID": 261,
+    "world": 1,
+    "map": 5,
+    "node": 1,
+    "boss": true,
+    "rank": "A",
+    "fleet": [
+      {
+        "id": 1,
+        "type": 2
+      }
+    ],
+    "conditionIndex": 0
+  },
+  {
+    "questID": 265,
+    "world": 1,
+    "map": 5,
+    "node": 1,
+    "boss": true,
+    "rank": "A",
+    "fleet": [
+      {
+        "id": 1,
+        "type": 2
+      }
+    ],
+    "conditionIndex": 0
+  },
+  {
+    "questID": 249,
+    "world": 2,
+    "map": 5,
+    "node": 1,
+    "boss": true,
+    "rank": "S",
+    "fleet": [
+      {
+        "id": 62,
+        "type": 5
+      },
+      {
+        "id": 63,
+        "type": 5
+      },
+      {
+        "id": 65,
+        "type": 5
+      }
+    ],
+    "conditionIndex": 0
+  },
+  {
+    "questID": 256,
+    "world": 6,
+    "map": 1,
+    "node": 1,
+    "boss": true,
+    "rank": "S",
+    "fleet": [
+      {
+        "id": 1,
+        "type": 2
+      }
+    ],
+    "conditionIndex": 0
+  },
+  {
+    "questID": 257,
+    "world": 1,
+    "map": 4,
+    "node": 1,
+    "boss": true,
+    "rank": "S",
+    "fleet": [
+      {
+        "id": 10,
+        "type": 3
+      },
+      {
+        "id": 11,
+        "type": 2
+      }
+    ],
+    "conditionIndex": 0
+  },
+  {
+    "questID": 259,
+    "world": 5,
+    "map": 1,
+    "node": 1,
+    "boss": true,
+    "rank": "S",
+    "fleet": [
+      {
+        "id": 77,
+        "type": 9
+      },
+      {
+        "id": 26,
+        "type": 9
+      },
+      {
+        "id": 80,
+        "type": 9
+      },
+      {
+        "id": 20,
+        "type": 3
+      }
+    ],
+    "conditionIndex": 0
+  },
+  {
+    "questID": 264,
+    "world": 4,
+    "map": 2,
+    "node": 1,
+    "boss": true,
+    "rank": "S",
+    "fleet": [
+      {
+        "id": 1,
+        "type": 11
+      },
+      {
+        "id": 2,
+        "type": 7
+      },
+      {
+        "id": 3,
+        "type": 2
+      },
+      {
+        "id": 4,
+        "type": 2
+      }
+    ],
+    "conditionIndex": 0
+  },
+  {
+    "questID": 266,
+    "world": 2,
+    "map": 5,
+    "node": 1,
+    "boss": true,
+    "rank": "S",
+    "fleet": [
+      {
+        "id": 1,
+        "type": 2
+      },
+      {
+        "id": 2,
+        "type": 2
+      },
+      {
+        "id": 3,
+        "type": 2
+      },
+      {
+        "id": 4,
+        "type": 2
+      },
+      {
+        "id": 5,
+        "type": 3
+      },
+      {
+        "id": 6,
+        "type": 5
+      }
+    ],
+    "conditionIndex": 0
+  },
+  {
+    "questID": 280,
+    "world": 1,
+    "map": 2,
+    "node": 1,
+    "boss": true,
+    "rank": "S",
+    "fleet": [
+      {
+        "id": 1,
+        "type": 3
+      },
+      {
+        "id": 2,
+        "type": 2
+      },
+      {
+        "id": 3,
+        "type": 2
+      },
+      {
+        "id": 4,
+        "type": 2
+      }
+    ],
+    "conditionIndex": 0
+  },
+  {
+    "questID": 822,
+    "world": 2,
+    "map": 4,
+    "node": 1,
+    "boss": true,
+    "rank": "S",
+    "fleet": [
+      {
+        "id": 1,
+        "type": 2
+      }
+    ],
+    "conditionIndex": 0
+  },
+  {
+    "questID": 854,
+    "world": 2,
+    "map": 4,
+    "node": 1,
+    "boss": true,
+    "rank": "A",
+    "fleet": [
+      {
+        "id": 1,
+        "type": 2
+      }
+    ],
+    "conditionIndex": 0
+  },
+  {
+    "questID": 872,
+    "world": 7,
+    "map": 2,
+    "node": 15,
+    "boss": false,
+    "rank": "S",
+    "fleet": [
+      {
+        "id": 1,
+        "type": 2
+      }
+    ],
+    "conditionIndex": 0
+  },
+  {
+    "questID": 862,
+    "world": 6,
+    "map": 3,
+    "node": 1,
+    "boss": true,
+    "rank": "A",
+    "fleet": [
+      {
+        "id": 1,
+        "type": 3
+      },
+      {
+        "id": 2,
+        "type": 3
+      },
+      {
+        "id": 3,
+        "type": 16
+      }
+    ],
+    "conditionIndex": 0
+  },
+  {
+    "questID": 873,
+    "world": 3,
+    "map": 1,
+    "node": 1,
+    "boss": true,
+    "rank": "A",
+    "fleet": [
+      {
+        "id": 1,
+        "type": 2
+      }
+    ],
+    "conditionIndex": 0
+  },
+  {
+    "questID": 845,
+    "world": 4,
+    "map": 1,
+    "node": 1,
+    "boss": true,
+    "rank": "S",
+    "fleet": [
+      {
+        "id": 1,
+        "type": 2
+      }
+    ],
+    "conditionIndex": 0
+  },
+  {
+    "questID": 875,
+    "world": 5,
+    "map": 4,
+    "node": 1,
+    "boss": true,
+    "rank": "S",
+    "fleet": [
+      {
+        "id": 543,
+        "type": 2
+      },
+      {
+        "id": 344,
+        "type": 2
+      }
+    ],
+    "conditionIndex": 0
+  },
+  {
+    "questID": 893,
+    "world": 1,
+    "map": 5,
+    "node": 1,
+    "boss": true,
+    "rank": "S",
+    "fleet": [
+      {
+        "id": 1,
+        "type": 2
+      }
+    ],
+    "conditionIndex": 0
+  },
+  {
+    "questID": 894,
+    "world": 1,
+    "map": 3,
+    "node": 1,
+    "boss": true,
+    "rank": "S",
+    "fleet": [
+      {
+        "id": 1,
+        "type": 11
+      }
+    ],
+    "conditionIndex": 0
+  },
+  {
+    "questID": 284,
+    "world": 1,
+    "map": 4,
+    "node": 1,
+    "boss": true,
+    "rank": "S",
+    "fleet": [
+      {
+        "id": 1,
+        "type": 3
+      },
+      {
+        "id": 2,
+        "type": 2
+      },
+      {
+        "id": 3,
+        "type": 2
+      },
+      {
+        "id": 4,
+        "type": 2
+      }
+    ],
+    "conditionIndex": 0
+  },
+  {
+    "questID": 888,
+    "world": 5,
+    "map": 1,
+    "node": 1,
+    "boss": true,
+    "rank": "S",
+    "fleet": [
+      {
+        "id": 51,
+        "type": 5
+      }
+    ],
+    "conditionIndex": 0
+  },
+  {
+    "questID": 903,
+    "world": 5,
+    "map": 1,
+    "node": 1,
+    "boss": true,
+    "rank": "S",
+    "fleet": [
+      {
+        "id": 622,
+        "type": 3
+      },
+      {
+        "id": 488,
+        "type": 3
+      }
+    ],
+    "conditionIndex": 0
+  }
+]

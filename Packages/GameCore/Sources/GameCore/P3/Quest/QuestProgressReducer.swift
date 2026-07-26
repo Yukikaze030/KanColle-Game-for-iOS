@@ -6,8 +6,8 @@ public enum QuestProgressReduction: Sendable, Equatable {
     case ignored
 }
 
-/// Applies basic count-only quest rules. Map, rank, enemy composition and fleet
-/// predicates intentionally belong to the task-10 condition evaluator.
+/// Applies basic count rules and the immutable condition projections produced by
+/// `QuestConditionEvaluator`.
 public struct QuestProgressReducer: Sendable {
     public struct CounterRule: Sendable, Equatable {
         public let questID: Int
@@ -23,6 +23,7 @@ public struct QuestProgressReducer: Sendable {
 
     private let definitions: [Int: QuestDefinition]
     private let resetCalendar: QuestResetCalendar
+    private let conditionEvaluator: QuestConditionEvaluator
     private let deduplicationCapacity: Int
     private var recentEventIDs: [String] = []
     private var recentEventIDSet: Set<String> = []
@@ -30,10 +31,12 @@ public struct QuestProgressReducer: Sendable {
     public init(
         definitions: [Int: QuestDefinition],
         resetCalendar: QuestResetCalendar = QuestResetCalendar(),
+        conditionEvaluator: QuestConditionEvaluator = QuestConditionEvaluator(),
         deduplicationCapacity: Int = 128
     ) {
         self.definitions = definitions
         self.resetCalendar = resetCalendar
+        self.conditionEvaluator = conditionEvaluator
         self.deduplicationCapacity = max(1, deduplicationCapacity)
     }
 
@@ -53,6 +56,28 @@ public struct QuestProgressReducer: Sendable {
         }
         guard !changed.isEmpty else { return .ignored }
         snapshot.updatedAt = event.occurredAt
+        return .applied(questIDs: changed.sorted())
+    }
+
+    @discardableResult
+    public mutating func reduce(
+        _ event: QuestConditionalEvent,
+        eventID: String,
+        occurredAt: Date,
+        flags: QuestSessionFlags = QuestSessionFlags(),
+        snapshot: inout QuestListSnapshot
+    ) -> QuestProgressReduction {
+        guard !recentEventIDSet.contains(eventID) else { return .duplicate(eventID: eventID) }
+        remember(eventID)
+
+        let mutations = conditionEvaluator.evaluate(event, flags: flags)
+        guard !mutations.isEmpty else { return .ignored }
+        var changed = Set<Int>()
+        for mutation in mutations where apply(mutation, at: occurredAt, snapshot: &snapshot) {
+            changed.insert(mutation.questID)
+        }
+        guard !changed.isEmpty else { return .ignored }
+        snapshot.updatedAt = occurredAt
         return .applied(questIDs: changed.sorted())
     }
 
@@ -144,11 +169,45 @@ public struct QuestProgressReducer: Sendable {
         return true
     }
 
+    private func apply(
+        _ mutation: QuestProgressMutation,
+        at date: Date,
+        snapshot: inout QuestListSnapshot
+    ) -> Bool {
+        switch mutation {
+        case let .increment(questID, conditionIndex, amount):
+            return apply(
+                CounterRule(questID: questID, conditionIndex: conditionIndex, amount: amount),
+                at: date,
+                snapshot: &snapshot
+            )
+        case let .setAtLeast(questID, conditionIndex, value):
+            guard let current = snapshot.tracking[questID]?.counters[safe: conditionIndex] else {
+                return false
+            }
+            return apply(
+                CounterRule(
+                    questID: questID,
+                    conditionIndex: conditionIndex,
+                    amount: max(0, value - current)
+                ),
+                at: date,
+                snapshot: &snapshot
+            )
+        }
+    }
+
     private mutating func remember(_ eventID: String) {
         guard recentEventIDSet.insert(eventID).inserted else { return }
         recentEventIDs.append(eventID)
         if recentEventIDs.count > deduplicationCapacity {
             recentEventIDSet.remove(recentEventIDs.removeFirst())
         }
+    }
+}
+
+private extension Array {
+    subscript(safe index: Int) -> Element? {
+        indices.contains(index) ? self[index] : nil
     }
 }
