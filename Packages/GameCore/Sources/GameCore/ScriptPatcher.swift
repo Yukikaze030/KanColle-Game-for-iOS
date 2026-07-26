@@ -288,6 +288,10 @@ public struct ScriptPatcher: Sendable {
         var signature=endpoint+"|"+response.length+"|"+response.slice(0,48)+"|"+response.slice(-48);
         if(recent.indexOf(signature)>=0)return;
         recent.push(signature);if(recent.length>32)recent.shift();
+        try {
+            var lifecycle=window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.gotoGameLifecycle;
+            if(lifecycle)lifecycle.postMessage({type:"gameReady"});
+        } catch (_) {}
         bridge({type:"kcsapi",endpoint:endpoint,request:stringify(request),response:response});
     }
     window.addEventListener("message",function(event){

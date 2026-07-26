@@ -98,7 +98,7 @@ struct RootView: View {
             }
             Button("继续盲隧道", role: .cancel) {}
         } message: {
-            Text("本次启动已禁用 HTTPS 解密并回退为普通盲隧道，游戏仍可加载，但资源缓存、API 解析及补丁功能暂不可用。安装并完全信任根证书后，下次启动会自动恢复。")
+            Text("本次启动已禁用实验性 HTTPS 资源解密并回退为普通盲隧道。游戏及舰队/战斗/任务 API 解析仍可正常使用，仅资源缓存和脚本补丁暂不可用。")
         }
         .alert("提示", isPresented: Binding(
             get: { alertMessage != nil },

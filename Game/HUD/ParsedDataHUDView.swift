@@ -119,7 +119,7 @@ struct ParsedDataHUDView: View {
             ContentUnavailableView {
                 Label("等待解析数据", systemImage: "network.slash")
             } description: {
-                Text("进入母港后仍无数据时，请检查根证书完全信任和 HTTPS 解析开关。")
+                Text("进入母港后会自动读取游戏 API；该功能不需要安装根证书。")
             }
             .font(.caption)
         } else {

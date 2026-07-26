@@ -67,7 +67,7 @@ enum BrowserControllerError: LocalizedError {
 }
 
 @MainActor
-final class WebViewCoordinator: NSObject, WKNavigationDelegate {
+final class WebViewCoordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
     let controller: BrowserController
     /// 任务 8+ 接线：进程终止后的上层回调（如提示/计数/降级 UA）。
     var onProcessTerminated: (() -> Void)?
@@ -77,6 +77,7 @@ final class WebViewCoordinator: NSObject, WKNavigationDelegate {
     var onGameReady: (() -> Void)?
 
     private var didReportGameReady = false
+    private var isPollingGameReady = false
     private var recentProcessTerminations: [Date] = []
 
     init(controller: BrowserController) {
@@ -124,6 +125,16 @@ final class WebViewCoordinator: NSObject, WKNavigationDelegate {
 
     private func detectGameReady(in webView: WKWebView) {
         guard !didReportGameReady else { return }
+        guard !isPollingGameReady else { return }
+        isPollingGameReady = true
+        pollForGameReady(in: webView, remainingAttempts: 120)
+    }
+
+    private func pollForGameReady(in webView: WKWebView, remainingAttempts: Int) {
+        guard !didReportGameReady else {
+            isPollingGameReady = false
+            return
+        }
         let script = """
         (() => !!(
           document.getElementById("game_frame") ||
@@ -133,9 +144,37 @@ final class WebViewCoordinator: NSObject, WKNavigationDelegate {
         ))()
         """
         webView.evaluateJavaScript(script) { [weak self] value, _ in
-            guard let self, !self.didReportGameReady, (value as? Bool) == true else { return }
-            self.didReportGameReady = true
-            self.onGameReady?()
+            guard let self else { return }
+            if (value as? Bool) == true {
+                self.reportGameReady()
+            } else if remainingAttempts > 1 {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self, weak webView] in
+                    guard let self, let webView else { return }
+                    self.pollForGameReady(
+                        in: webView,
+                        remainingAttempts: remainingAttempts - 1
+                    )
+                }
+            } else {
+                self.isPollingGameReady = false
+            }
         }
+    }
+
+    func userContentController(
+        _ userContentController: WKUserContentController,
+        didReceive message: WKScriptMessage
+    ) {
+        guard message.name == "gotoGameLifecycle",
+              let body = message.body as? [String: Any],
+              body["type"] as? String == "gameReady" else { return }
+        reportGameReady()
+    }
+
+    private func reportGameReady() {
+        guard !didReportGameReady else { return }
+        didReportGameReady = true
+        isPollingGameReady = false
+        onGameReady?()
     }
 }

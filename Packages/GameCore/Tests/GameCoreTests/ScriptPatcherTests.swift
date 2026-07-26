@@ -73,6 +73,7 @@ final class ScriptPatcherTests: XCTestCase {
         XCTAssertTrue(output.contains("window.fetch"))
         XCTAssertTrue(output.contains("response.clone()"))
         XCTAssertTrue(output.contains("copy.text()"))
+        XCTAssertTrue(output.contains("messageHandlers.gotoGameLifecycle"))
         XCTAssertTrue(output.contains(#"response.indexOf("svdata=")"#))
         XCTAssertTrue(output.contains(#"host.endsWith(".kancolle-server.com")"#))
         XCTAssertTrue(output.contains(#"host==="ooi.moe""#))

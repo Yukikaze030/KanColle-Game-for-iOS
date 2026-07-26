@@ -47,6 +47,18 @@ struct BrowserView: UIViewRepresentable {
         #game_frame,#externalswf{border:0!important;transform-origin:top left!important}
       `;
       (document.head || document.documentElement).appendChild(style);
+      const signalGameReady = () => {
+        const host = (location.hostname || "").toLowerCase();
+        const hasGameFrame =
+          document.getElementById("game_frame") ||
+          document.getElementById("externalswf") ||
+          document.querySelector('iframe[src*="kancolle-server.com"]');
+        if (host.endsWith("kancolle-server.com") || hasGameFrame) {
+          try {
+            window.webkit.messageHandlers.gotoGameLifecycle.postMessage({type:"gameReady"});
+          } catch (_) {}
+        }
+      };
       const resize = () => {
         const frame = document.getElementById("game_frame") || document.getElementById("externalswf");
         if (frame) {
@@ -58,6 +70,7 @@ struct BrowserView: UIViewRepresentable {
           frame.style.top = `${Math.max(0, (innerHeight - 720 * scale) / 2)}px`;
           frame.style.transform = `scale(${scale})`;
         }
+        signalGameReady();
       };
       new MutationObserver(resize).observe(document.documentElement,{childList:true,subtree:true});
       addEventListener("resize",resize,{passive:true});
@@ -103,6 +116,7 @@ struct BrowserView: UIViewRepresentable {
         config.userContentController.addUserScript(viewport)
         config.userContentController.addUserScript(gameLayout)
         config.userContentController.add(bridge, name: "gotoBrowser")
+        config.userContentController.add(context.coordinator, name: "gotoGameLifecycle")
 
         let webView = WKWebView(frame: .zero, configuration: config)
         webView.customUserAgent = settings.legacyRenderer ? BrowserConstants.userAgentIOSCanvas : BrowserConstants.userAgentDesktop
