@@ -1,0 +1,1 @@
+Synthetic, minimal KanColle API envelopes for quest-router regression tests. They contain no account tokens, cookies, user names, or captured personal fleet data. Field shapes follow the public Android Kcanotify `KcaService` handlers.
