@@ -2,8 +2,9 @@ import Foundation
 import Security
 import GameCore
 
-/// Stores connector credentials as one Keychain item. Credential values are never
-/// written to UserDefaults or to a file owned by the app.
+/// Stores one shared credential for every connector. Older builds used one
+/// Keychain account per connector; `load` migrates the first legacy value it
+/// finds into the shared item so users do not need to enter it again.
 struct KeychainStore: Sendable {
     struct Credentials: Codable, Equatable, Sendable {
         let id: String
@@ -32,12 +33,14 @@ struct KeychainStore: Sendable {
     }
 
     private let service: String
+    private static let sharedAccount = "shared"
 
     init(service: String = "com.antest1.game.connector-credentials") {
         self.service = service
     }
 
     func save(_ credentials: Credentials, for connector: BrowserConstants.Connector) throws {
+        _ = connector // Kept in the API so existing callers need no special branch.
         guard !credentials.id.isEmpty, !credentials.password.isEmpty else {
             throw StoreError.invalidCredentials
         }
@@ -49,7 +52,7 @@ struct KeychainStore: Sendable {
             throw StoreError.encodingFailed(error.localizedDescription)
         }
 
-        let query = baseQuery(for: connector)
+        let query = baseQuery(account: Self.sharedAccount)
         let update: [String: Any] = [
             kSecValueData as String: encoded,
             kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
@@ -57,7 +60,7 @@ struct KeychainStore: Sendable {
         let updateStatus = SecItemUpdate(query as CFDictionary, update as CFDictionary)
         switch updateStatus {
         case errSecSuccess:
-            return
+            break
         case errSecItemNotFound:
             var item = query
             item[kSecValueData as String] = encoded
@@ -69,10 +72,31 @@ struct KeychainStore: Sendable {
         default:
             throw StoreError.securityStatus(operation: "更新", status: updateStatus)
         }
+
+        // A successful shared write makes connector-specific legacy records
+        // unnecessary. Cleanup is best effort because the new credential is
+        // already safely persisted.
+        deleteLegacyItems()
     }
 
     func load(for connector: BrowserConstants.Connector) throws -> Credentials? {
-        var query = baseQuery(for: connector)
+        if let shared = try load(account: Self.sharedAccount) {
+            return shared
+        }
+
+        // Prefer the currently selected connector, then inspect the other old
+        // accounts. All three connectors use the same DMM credentials.
+        let legacyOrder = [connector] + BrowserConstants.Connector.allCases.filter { $0 != connector }
+        for legacyConnector in legacyOrder {
+            guard let legacy = try load(account: legacyConnector.rawValue) else { continue }
+            try save(legacy, for: connector)
+            return legacy
+        }
+        return nil
+    }
+
+    private func load(account: String) throws -> Credentials? {
+        var query = baseQuery(account: account)
         query[kSecReturnData as String] = true
         query[kSecMatchLimit as String] = kSecMatchLimitOne
 
@@ -90,17 +114,32 @@ struct KeychainStore: Sendable {
     }
 
     func delete(for connector: BrowserConstants.Connector) throws {
-        let status = SecItemDelete(baseQuery(for: connector) as CFDictionary)
+        _ = connector
+        try deleteAll()
+    }
+
+    func deleteAll() throws {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service
+        ]
+        let status = SecItemDelete(query as CFDictionary)
         guard status == errSecSuccess || status == errSecItemNotFound else {
             throw StoreError.securityStatus(operation: "删除", status: status)
         }
     }
 
-    private func baseQuery(for connector: BrowserConstants.Connector) -> [String: Any] {
+    private func deleteLegacyItems() {
+        for connector in BrowserConstants.Connector.allCases {
+            SecItemDelete(baseQuery(account: connector.rawValue) as CFDictionary)
+        }
+    }
+
+    private func baseQuery(account: String) -> [String: Any] {
         [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
-            kSecAttrAccount as String: connector.rawValue
+            kSecAttrAccount as String: account
         ]
     }
 }

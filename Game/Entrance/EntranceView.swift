@@ -58,7 +58,7 @@ struct EntranceView: View {
                 } header: {
                     Text("登录信息")
                 } footer: {
-                    Text("凭证仅保存在系统钥匙串，不会写入 UserDefaults 或普通文件。")
+                    Text("三种连接方式共用这一套凭证。凭证仅保存在系统钥匙串，不会写入 UserDefaults 或普通文件。")
                 }
 
                 Section("启动选项") {
@@ -132,7 +132,7 @@ struct EntranceView: View {
                 try keychain.save(sessionCredentials, for: connector)
                 hasSavedCredentials = true
             } else {
-                try keychain.delete(for: connector)
+                try keychain.deleteAll()
                 hasSavedCredentials = false
             }
             var updatedSettings = settings

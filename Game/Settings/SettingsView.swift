@@ -409,9 +409,7 @@ struct SettingsView: View {
 
     private func clearCredentials() {
         do {
-            for connector in BrowserConstants.Connector.allCases {
-                try keychain.delete(for: connector)
-            }
+            try keychain.deleteAll()
         } catch {
             errorMessage = error.localizedDescription
         }
