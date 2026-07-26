@@ -49,6 +49,28 @@ struct CertificateInstallView: View {
                     .foregroundStyle(.red)
                     .textSelection(.enabled)
             }
+
+            if let detail = model.trustDetail {
+                LabeledContent("检测详情") {
+                    Text(detail)
+                        .multilineTextAlignment(.trailing)
+                        .textSelection(.enabled)
+                }
+                .font(.footnote)
+            }
+
+            if let fingerprint = model.certificateFingerprint {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("当前根证书 SHA-256")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Text(fingerprint)
+                        .font(.system(.caption2, design: .monospaced))
+                        .textSelection(.enabled)
+                        .accessibilityLabel("当前根证书 SHA-256 指纹")
+                        .accessibilityValue(fingerprint)
+                }
+            }
         }
     }
 
@@ -87,7 +109,7 @@ struct CertificateInstallView: View {
             installationStep(1, "点击“分享或打开证书”，在分享菜单中选择打开或存储证书。")
             installationStep(2, "回到“设置”，进入“已下载描述文件”，完成证书描述文件安装。")
             installationStep(3, "进入“通用”→“关于本机”→“证书信任设置”。")
-            installationStep(4, "为“KanColle Game Local Root CA”启用完全信任，并确认系统警告。")
+            installationStep(4, "为“KanColle Game Local CA”启用完全信任，并确认系统警告。")
             installationStep(5, "返回本页，点击“重新检测信任状态”。")
         }
     }
@@ -114,7 +136,13 @@ struct CertificateInstallView: View {
             .disabled(model.isBusy)
         } footer: {
             if model.state == .untrusted {
-                Text("未启用完全信任时，后续代理会对游戏域名回退为普通盲隧道，不会永久关闭此设置。")
+                Text(
+                    "若已启用完全信任仍检测失败，请比较本页 SHA-256 指纹与已安装证书；"
+                        + "指纹不同表示系统中仍是旧证书。请删除旧描述文件，返回本页重新"
+                        + "“分享或打开证书”并安装，再到“证书信任设置”为"
+                        + "“KanColle Game Local CA”启用完全信任。"
+                        + "未通过验证时代理只会使用普通盲隧道，不会绕过安全检查。"
+                )
             }
         }
     }
@@ -160,7 +188,7 @@ struct CertificateInstallView: View {
         case .idle:
             return "将生成本机专用根证书。"
         case .checking:
-            return "正在使用系统信任库验证游戏服务器证书。"
+            return "正在刷新 trustd，并分别验证系统根证书完全信任和动态服务器证书链。"
         case .trusted:
             return "游戏服务器 HTTPS 流量可以安全进入本地缓存与补丁流程。"
         case .untrusted:
