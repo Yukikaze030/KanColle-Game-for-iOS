@@ -15,15 +15,18 @@ public struct ScriptPatcher: Sendable {
         public var muteOnStart: Bool
         public var cursorMode: CursorMode
         public var adjustsGameLayout: Bool
+        public var unlocksFPS: Bool
 
         public init(
             muteOnStart: Bool = false,
             cursorMode: CursorMode = .mouse,
-            adjustsGameLayout: Bool = true
+            adjustsGameLayout: Bool = true,
+            unlocksFPS: Bool = false
         ) {
             self.muteOnStart = muteOnStart
             self.cursorMode = cursorMode
             self.adjustsGameLayout = adjustsGameLayout
+            self.unlocksFPS = unlocksFPS
         }
     }
 
@@ -41,6 +44,7 @@ public struct ScriptPatcher: Sendable {
 
     public func patchMainScript(_ script: String, options: Options = .init()) -> String {
         var output = script
+        output = patchFPS(in: output, enabled: options.unlocksFPS)
         output = patchAudio(in: output, muteOnStart: options.muteOnStart)
 
         if options.cursorMode == .touch {
@@ -63,6 +67,61 @@ public struct ScriptPatcher: Sendable {
 
         return output
     }
+
+    // MARK: - Frame rate
+
+    /// Ports GotoBrowser's FpsPatcher: replace the first obfuscated CreateJS
+    /// ticker-mode assignment with direct requestAnimationFrame scheduling.
+    private func patchFPS(in script: String, enabled: Bool) -> String {
+        guard enabled, !script.contains(Self.fpsMarker) else { return script }
+        let pattern = #"(createjs[^,;=]{0,40})(=createjs[^,;=]{0,40}),"#
+        guard let regex = try? NSRegularExpression(pattern: pattern) else {
+            return script
+        }
+        let range = NSRange(script.startIndex..., in: script)
+        guard let match = regex.firstMatch(in: script, range: range),
+              let swiftRange = Range(match.range, in: script) else {
+            return script
+        }
+        let replacement = regex.replacementString(
+            for: match,
+            in: script,
+            offset: 0,
+            template: "$1=createjs.Ticker.RAF,"
+        )
+        var patched = script
+        patched.replaceSubrange(swiftRange, with: replacement)
+        return "/*\(Self.fpsMarker)*/\n" + patched
+    }
+
+    /// Certificate-free fallback for normal CONNECT mode. It waits for CreateJS
+    /// in every frame and keeps RAF selected through the game's initialization.
+    public static let fpsUnlockScript = #"""
+    (function(){
+    if(window.__gotoIOSFPSUnlockInstalled)return;
+    window.__gotoIOSFPSUnlockInstalled=true;
+    var attempts=0,applied=0,timer=0;
+    function log(text){
+        try{window.webkit.messageHandlers.gotoBrowser.postMessage({type:"log",text:text});}catch(_){}
+    }
+    function apply(){
+        attempts++;
+        var ticker=window.createjs&&window.createjs.Ticker;
+        if(ticker&&ticker.RAF){
+            ticker.timingMode=ticker.RAF;
+            ticker.useRAF=true;
+            applied++;
+            if(applied===1)log("FPS_UNLOCK_RAF_APPLIED");
+        }
+        if(attempts>=240||applied>=80){
+            clearInterval(timer);
+            if(!applied)log("FPS_UNLOCK_CREATEJS_NOT_FOUND");
+        }
+    }
+    timer=setInterval(apply,250);
+    apply();
+    })();
+    """#
 
     // MARK: - Audio
 
@@ -188,6 +247,7 @@ public struct ScriptPatcher: Sendable {
         return String(text[range])
     }
 
+    private static let fpsMarker = "__GOTO_IOS_FPS_PATCH_V1__"
     private static let audioMarker = "__GOTO_IOS_AUDIO_PATCH_V1__"
     private static let touchMarker = "__GOTO_IOS_TOUCH_PATCH_V1__"
     private static let bridgeMarker = "__GOTO_IOS_BRIDGE_PATCH_V1__"

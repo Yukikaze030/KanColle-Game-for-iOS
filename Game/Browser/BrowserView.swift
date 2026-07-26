@@ -108,11 +108,21 @@ struct BrowserView: UIViewRepresentable {
             injectionTime: .atDocumentStart,
             forMainFrameOnly: false
         )
+        let fpsUnlock = settings.fpsUnlockEnabled
+            ? WKUserScript(
+                source: ScriptPatcher.fpsUnlockScript,
+                injectionTime: .atDocumentStart,
+                forMainFrameOnly: false
+            )
+            : nil
         let viewport = WKUserScript(source: BrowserConstants.viewportMetaScript,
                                     injectionTime: .atDocumentEnd, forMainFrameOnly: true)
         let gameLayout = WKUserScript(source: Self.gameLayoutScript,
                                       injectionTime: .atDocumentEnd, forMainFrameOnly: false)
         config.userContentController.addUserScript(apiBridge)
+        if let fpsUnlock {
+            config.userContentController.addUserScript(fpsUnlock)
+        }
         config.userContentController.addUserScript(viewport)
         config.userContentController.addUserScript(gameLayout)
         config.userContentController.add(bridge, name: "gotoBrowser")

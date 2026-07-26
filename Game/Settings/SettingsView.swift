@@ -24,6 +24,7 @@ struct SettingsView: View {
     @State private var connector: BrowserConstants.Connector
     @State private var silentStart: Bool
     @State private var legacyRenderer: Bool
+    @State private var fpsUnlockEnabled: Bool
     @State private var cursorMode: SettingsStore.CursorMode
     @State private var keepScreenOn: Bool
     @State private var subtitleEnabled: Bool
@@ -64,6 +65,7 @@ struct SettingsView: View {
         _connector = State(initialValue: settings.connector)
         _silentStart = State(initialValue: settings.silentStart)
         _legacyRenderer = State(initialValue: settings.legacyRenderer)
+        _fpsUnlockEnabled = State(initialValue: settings.fpsUnlockEnabled)
         _cursorMode = State(initialValue: settings.cursorMode)
         _keepScreenOn = State(initialValue: settings.keepScreenOn)
         _subtitleEnabled = State(initialValue: settings.subtitleEnabled)
@@ -166,7 +168,7 @@ struct SettingsView: View {
     }
 
     private var browserSection: some View {
-        Section("浏览器") {
+        Section {
             Picker("连接器", selection: $connector) {
                 ForEach(BrowserConstants.Connector.allCases, id: \.self) {
                     Text($0.rawValue).tag($0)
@@ -177,15 +179,21 @@ struct SettingsView: View {
                 Text("Canvas（省内存）").tag(true)
                 Text("WebGL").tag(false)
             }
+            Toggle("移除 60 帧限制", isOn: $fpsUnlockEnabled)
             Picker("指针模式", selection: $cursorMode) {
                 Text("触摸").tag(SettingsStore.CursorMode.touch)
                 Text("鼠标").tag(SettingsStore.CursorMode.mouse)
             }
             Toggle("游戏时保持屏幕常亮", isOn: $keepScreenOn)
+        } header: {
+            Text("浏览器")
+        } footer: {
+            Text("帧率解锁使用 CreateJS RAF 模式，不改变动画速度；实际帧率受设备刷新率和 WebKit 限制。修改后需重新进入游戏。")
         }
         .onChange(of: connector) { _, value in update { $0.connector = value } }
         .onChange(of: silentStart) { _, value in update { $0.silentStart = value } }
         .onChange(of: legacyRenderer) { _, value in update { $0.legacyRenderer = value } }
+        .onChange(of: fpsUnlockEnabled) { _, value in update { $0.fpsUnlockEnabled = value } }
         .onChange(of: cursorMode) { _, value in update { $0.cursorMode = value } }
         .onChange(of: keepScreenOn) { _, value in update { $0.keepScreenOn = value } }
     }

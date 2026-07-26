@@ -50,6 +50,13 @@ public struct SettingsStore {
         set { defaults.set(newValue, forKey: "pref_legacy_renderer") }
     }
 
+    /// Matches GotoBrowser's `pref_mod_fps`; applied when a new game WebView is
+    /// created because WKUserScript injection is immutable after configuration.
+    public var fpsUnlockEnabled: Bool {
+        get { defaults.bool(forKey: "pref_mod_fps") }
+        set { defaults.set(newValue, forKey: "pref_mod_fps") }
+    }
+
     /// Enables experimental HTTPS resource inspection for game-server hosts.
     ///
     /// API parsing does not depend on this switch: WKWebView injects its API

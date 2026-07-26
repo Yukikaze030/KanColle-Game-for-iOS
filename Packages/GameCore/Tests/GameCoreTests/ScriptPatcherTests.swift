@@ -4,6 +4,43 @@ import XCTest
 final class ScriptPatcherTests: XCTestCase {
     private let patcher = ScriptPatcher()
 
+    func testFPSPatchPortsGotoBrowserRegexAndOnlyReplacesFirstAnchor() {
+        let first = "createjs.alpha=createjs.TimerMode,"
+        let second = "createjs.beta=createjs.OtherMode,"
+        let output = patcher.patchMainScript(
+            first + second,
+            options: .init(unlocksFPS: true)
+        )
+
+        XCTAssertTrue(output.contains("createjs.alpha=createjs.Ticker.RAF,"))
+        XCTAssertTrue(output.contains(second))
+        XCTAssertEqual(
+            output.components(separatedBy: "__GOTO_IOS_FPS_PATCH_V1__").count,
+            2
+        )
+    }
+
+    func testFPSPatchIsDisabledByDefaultAndToleratesChangedGameAnchor() {
+        let matching = "createjs.alpha=createjs.TimerMode,"
+        XCTAssertTrue(patcher.patchMainScript(matching).contains(matching))
+
+        let changed = "var tickerMode = unknownLibrary.mode;"
+        XCTAssertFalse(
+            patcher.patchMainScript(
+                changed,
+                options: .init(unlocksFPS: true)
+            ).contains("__GOTO_IOS_FPS_PATCH_V1__")
+        )
+    }
+
+    func testCertificateFreeFPSFallbackUsesCreateJSTickerRAF() {
+        let script = ScriptPatcher.fpsUnlockScript
+        XCTAssertTrue(script.contains("createjs&&window.createjs.Ticker"))
+        XCTAssertTrue(script.contains("ticker.timingMode=ticker.RAF"))
+        XCTAssertTrue(script.contains("ticker.useRAF=true"))
+        XCTAssertTrue(script.contains("FPS_UNLOCK_RAF_APPLIED"))
+    }
+
     func testMutePatchZerosInitialVolumesAndInstallsHowlHook() {
         let volumes = """
         this[a(b)]=x[y(z)][q(r)](s,t(u),v),this[c(d)]=m[n(o)][p(q)](r,s(t),u),this[e(f)]=h[i(j)][k(l)](m,n(o),p),this[g(h)]=0x1===i[j(k)][l(m)](n,o(p),q),this[r(s)]=0x1===t[u(v)][w(x)](y,z(a),b);

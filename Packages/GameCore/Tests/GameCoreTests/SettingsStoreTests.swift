@@ -19,6 +19,7 @@ final class SettingsStoreTests: XCTestCase {
         XCTAssertEqual(s.subtitleFontSize, 18)
         XCTAssertEqual(s.cursorMode, .touch)
         XCTAssertTrue(s.legacyRenderer)
+        XCTAssertFalse(s.fpsUnlockEnabled)
         XCTAssertFalse(s.mitmEnabled)
         XCTAssertTrue(s.downloadRetry)
         XCTAssertTrue(s.memoryWarnEnabled)
@@ -75,6 +76,7 @@ final class SettingsStoreTests: XCTestCase {
         s.silentStart = true
         s.cacheEnabled = false
         s.legacyRenderer = false
+        s.fpsUnlockEnabled = true
         s.cursorMode = .mouse
         s.keepScreenOn = true
         s.subtitleEnabled = true
@@ -91,6 +93,7 @@ final class SettingsStoreTests: XCTestCase {
         XCTAssertTrue(s2.silentStart)
         XCTAssertFalse(s2.cacheEnabled)
         XCTAssertFalse(s2.legacyRenderer)
+        XCTAssertTrue(s2.fpsUnlockEnabled)
         XCTAssertEqual(s2.cursorMode, .mouse)
         XCTAssertTrue(s2.keepScreenOn)
         XCTAssertTrue(s2.subtitleEnabled)

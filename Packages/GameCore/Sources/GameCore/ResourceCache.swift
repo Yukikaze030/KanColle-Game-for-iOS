@@ -439,7 +439,8 @@ public final class ResourceCache: @unchecked Sendable {
             options: .init(
                 muteOnStart: settings.silentStart,
                 cursorMode: cursorMode,
-                adjustsGameLayout: true
+                adjustsGameLayout: true,
+                unlocksFPS: settings.fpsUnlockEnabled
             )
         )
     }
