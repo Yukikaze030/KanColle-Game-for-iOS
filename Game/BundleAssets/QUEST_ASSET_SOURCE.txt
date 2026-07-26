@@ -1,0 +1,5 @@
+quest_track.json and quests-scn.json are copied from:
+/Users/haozhe/GitHub/kcanotify-master/app/src/main/assets/
+Upstream project: kcanotify-master (Antest1/Kcanotify)
+Used as static quest tracking definitions and Simplified Chinese display text.
+These files contain no user account, request, response, token, nickname, or member data.
