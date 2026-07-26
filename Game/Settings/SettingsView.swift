@@ -176,7 +176,7 @@ struct SettingsView: View {
             }
             Toggle("静音启动", isOn: $silentStart)
             Picker("渲染器", selection: $legacyRenderer) {
-                Text("Canvas（省内存）").tag(true)
+                Text("Canvas（兼容模式）").tag(true)
                 Text("WebGL").tag(false)
             }
             Toggle("移除 60 帧限制", isOn: $fpsUnlockEnabled)
@@ -188,7 +188,7 @@ struct SettingsView: View {
         } header: {
             Text("浏览器")
         } footer: {
-            Text("帧率解锁使用 CreateJS RAF 模式，不改变动画速度；实际帧率受设备刷新率和 WebKit 限制。修改后需重新进入游戏。")
+            Text("Canvas 是兼容模式，对本游戏可能占用更多解码与绘图内存。页面进程终止后，本次会话会自动降级为 WebGL；帧率解锁也可能增加内存与渲染压力。修改后需重新进入游戏。")
         }
         .onChange(of: connector) { _, value in update { $0.connector = value } }
         .onChange(of: silentStart) { _, value in update { $0.silentStart = value } }
@@ -290,7 +290,7 @@ struct SettingsView: View {
         } header: {
             Text("内存")
         } footer: {
-            Text("该数值监测 App 主进程；WebView 独立进程由系统内存警告和白屏恢复机制监测。自动阈值按设备内存分档。")
+            Text("阈值仅监测 App 主进程的 phys_footprint。WKWebView 的 WebContent 是独立进程，公开 API 无法读取其内存，只能通过系统内存警告和页面进程终止间接判断。")
         }
         .onChange(of: memoryWarnEnabled) { _, value in update { $0.memoryWarnEnabled = value } }
         .onChange(of: memoryWarnThresholdMB) { _, value in
@@ -300,8 +300,59 @@ struct SettingsView: View {
 
     private var diagnosticsSection: some View {
         Section("诊断") {
+            LabeledContent(
+                "当前 App phys_footprint",
+                value: formattedMemory(diagnostics.currentMemorySample?.residentMB)
+            )
+            LabeledContent(
+                "会话峰值",
+                value: formattedMemory(
+                    diagnostics.sessionPeakMemoryMB > 0
+                        ? diagnostics.sessionPeakMemoryMB
+                        : nil
+                )
+            )
+            LabeledContent("最近内存采样", value: formattedMemorySampleDate)
+            LabeledContent(
+                "系统内存警告次数",
+                value: "\(diagnostics.systemMemoryWarningCount)"
+            )
             LabeledContent("WebView 终止次数", value: "\(diagnostics.processTerminationCount)")
             LabeledContent("最近终止时间", value: formattedTerminationDate)
+            LabeledContent(
+                "自动恢复超限次数",
+                value: "\(diagnostics.recoveryLimitExceededCount)"
+            )
+            LabeledContent(
+                "最近超限时终止次数",
+                value: diagnostics.lastRecoveryLimitTerminationCount.map(String.init) ?? "无"
+            )
+            LabeledContent(
+                "最近恢复超限时间",
+                value: formattedDate(diagnostics.lastRecoveryLimitExceededAt)
+            )
+            LabeledContent(
+                "Canvas → WebGL 降级次数",
+                value: "\(diagnostics.canvasToWebGLFallbackCount)"
+            )
+            LabeledContent(
+                "最近自动降级时间",
+                value: formattedDate(diagnostics.lastCanvasToWebGLFallbackAt)
+            )
+            if !diagnostics.memorySamples.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("最近 App 内存样本")
+                        .foregroundStyle(.secondary)
+                    ForEach(Array(diagnostics.memorySamples.suffix(5).reversed())) { sample in
+                        HStack {
+                            Text(sample.date.formatted(date: .omitted, time: .standard))
+                            Spacer()
+                            Text(formattedMemory(sample.residentMB))
+                        }
+                        .font(.caption.monospacedDigit())
+                    }
+                }
+            }
             LabeledContent("最近游戏端点", value: diagnostics.latestGameEndpoint ?? "无")
             LabeledContent("战斗 revision", value: "\(diagnostics.battleRevision)")
             LabeledContent("任务 revision", value: "\(diagnostics.questRevision)")
@@ -319,6 +370,9 @@ struct SettingsView: View {
             } else {
                 LabeledContent("最近错误", value: "无")
             }
+            Text("以上 phys_footprint 仅属于 App 主进程。WebContent 运行在独立进程中，iOS 公开 API 无法读取其当前值或峰值。")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
     }
 
@@ -352,8 +406,21 @@ struct SettingsView: View {
     }
 
     private var formattedTerminationDate: String {
-        guard let date = diagnostics.lastProcessTermination else { return "无" }
+        formattedDate(diagnostics.lastProcessTermination)
+    }
+
+    private var formattedMemorySampleDate: String {
+        formattedDate(diagnostics.currentMemorySample?.date)
+    }
+
+    private func formattedDate(_ date: Date?) -> String {
+        guard let date else { return "无" }
         return date.formatted(date: .abbreviated, time: .standard)
+    }
+
+    private func formattedMemory(_ megabytes: Double?) -> String {
+        guard let megabytes else { return "无" }
+        return String(format: "%.1f MB", megabytes)
     }
 
     private var appVersion: String {

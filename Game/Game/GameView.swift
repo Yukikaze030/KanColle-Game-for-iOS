@@ -19,6 +19,8 @@ struct GameView: View {
     @State private var isGameReady = false
     @State private var showsMemoryWarning = false
     @State private var recoveryMessage: String?
+    @State private var recoveryPausedCount: Int?
+    @State private var navigationError: String?
     @State private var memoryMonitor: MemoryMonitor
 
     init(url: URL,
@@ -58,7 +60,8 @@ struct GameView: View {
                         controller: browserController,
                         onNavigationFinished: onNavigationFinished,
                         onGameReady: gameDidBecomeReady,
-                        onProcessTerminated: webContentProcessDidTerminate)
+                        onRecovery: handleRecovery,
+                        onNavigationError: { navigationError = $0 })
                 .ignoresSafeArea()
 
             if settings.subtitleEnabled {
@@ -137,7 +140,12 @@ struct GameView: View {
         }
         .alert("内存占用过高", isPresented: $showsMemoryWarning) {
             Button("清理缓存") {
-                URLCache.shared.removeAllCachedResponses()
+                browserController.purgeVolatileCaches()
+            }
+            if settings.legacyRenderer {
+                Button("切换 WebGL 并重载") {
+                    browserController.switchToWebGLAndReload()
+                }
             }
             Button("重新加载") {
                 browserController.reload()
@@ -151,6 +159,34 @@ struct GameView: View {
                     memoryMonitor.thresholdMB
                 )
             )
+        }
+        .alert("页面自动恢复已暂停", isPresented: Binding(
+            get: { recoveryPausedCount != nil },
+            set: { if !$0 { recoveryPausedCount = nil } }
+        )) {
+            Button("手动重新加载") {
+                recoveryPausedCount = nil
+                browserController.reload()
+            }
+            Button("退出游戏", role: .destructive) {
+                recoveryPausedCount = nil
+                onExit()
+            }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text("WebContent 在 5 分钟内已终止 \(recoveryPausedCount ?? 0) 次。为避免无限刷新，已停止自动恢复。建议关闭帧率解锁，或改用 WebGL 后重新进入游戏。")
+        }
+        .alert("网络或 SSL 加载失败", isPresented: Binding(
+            get: { navigationError != nil },
+            set: { if !$0 { navigationError = nil } }
+        )) {
+            Button("重新加载") {
+                navigationError = nil
+                browserController.reload()
+            }
+            Button("忽略", role: .cancel) { navigationError = nil }
+        } message: {
+            Text(navigationError ?? "")
         }
     }
 
@@ -188,22 +224,34 @@ struct GameView: View {
     }
 
     private func startHealthMonitoring() {
-        guard settings.memoryWarnEnabled else { return }
         memoryMonitor.onThresholdExceeded = {
-            showsMemoryWarning = true
+            if settings.memoryWarnEnabled {
+                showsMemoryWarning = true
+            }
         }
         memoryMonitor.onSystemMemoryWarning = {
-            URLCache.shared.removeAllCachedResponses()
-            showsMemoryWarning = true
+            browserController.purgeVolatileCaches()
+            if settings.memoryWarnEnabled {
+                showsMemoryWarning = true
+            }
         }
         memoryMonitor.start()
     }
 
-    private func webContentProcessDidTerminate() {
-        withAnimation { recoveryMessage = "页面进程已重启，正在自动恢复…" }
-        Task {
-            try? await Task.sleep(for: .seconds(3))
-            withAnimation { recoveryMessage = nil }
+    private func handleRecovery(_ event: WebContentRecoveryEvent) {
+        switch event {
+        case .automaticReload(let attempt, let switchedRenderer):
+            let rendererNote = switchedRenderer
+                ? "检测到 Canvas 页面进程终止，本次会话已切换为 WebGL。"
+                : "页面进程已终止，正在自动恢复（第 \(attempt) 次）。"
+            withAnimation { recoveryMessage = rendererNote }
+            Task {
+                try? await Task.sleep(for: .seconds(5))
+                withAnimation { recoveryMessage = nil }
+            }
+        case .automaticRecoveryPaused(let terminationCount):
+            recoveryMessage = nil
+            recoveryPausedCount = terminationCount
         }
     }
 }

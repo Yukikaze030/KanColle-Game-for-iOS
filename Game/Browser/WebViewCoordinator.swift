@@ -1,6 +1,12 @@
 import Combine
 import Foundation
 import WebKit
+import GameCore
+
+enum WebContentRecoveryEvent: Equatable {
+    case automaticReload(attempt: Int, switchedFromCanvasToWebGL: Bool)
+    case automaticRecoveryPaused(terminationCount: Int)
+}
 
 @MainActor
 final class BrowserController: ObservableObject {
@@ -9,6 +15,7 @@ final class BrowserController: ObservableObject {
     @Published private(set) var processTerminationCount = 0
 
     private(set) weak var webView: WKWebView?
+    fileprivate var onSwitchToWebGL: (() -> Void)?
 
     func attach(_ webView: WKWebView) {
         self.webView = webView
@@ -17,6 +24,29 @@ final class BrowserController: ObservableObject {
 
     func reload() {
         webView?.reload()
+    }
+
+    func purgeVolatileCaches(completion: (() -> Void)? = nil) {
+        URLCache.shared.removeAllCachedResponses()
+        guard let webView else {
+            completion?()
+            return
+        }
+        webView.configuration.websiteDataStore.removeData(
+            ofTypes: Set([WKWebsiteDataTypeMemoryCache]),
+            modifiedSince: .distantPast
+        ) {
+            DispatchQueue.main.async { completion?() }
+        }
+    }
+
+    func switchToWebGLAndReload() {
+        guard let webView else { return }
+        onSwitchToWebGL?()
+        webView.customUserAgent = BrowserConstants.userAgentDesktop
+        purgeVolatileCaches { [weak webView] in
+            webView?.reload()
+        }
     }
 
     func stopLoading() {
@@ -69,8 +99,8 @@ enum BrowserControllerError: LocalizedError {
 @MainActor
 final class WebViewCoordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
     let controller: BrowserController
-    /// 任务 8+ 接线：进程终止后的上层回调（如提示/计数/降级 UA）。
-    var onProcessTerminated: (() -> Void)?
+    var onRecovery: ((WebContentRecoveryEvent) -> Void)?
+    var onNavigationError: ((String) -> Void)?
     /// 任务 8+ 接线：导航开始回调（URL 变化追踪、latestURL 持久化）。
     var onNavigation: ((URL?) -> Void)?
     var onNavigationFinished: ((WKWebView) -> Void)?
@@ -79,6 +109,7 @@ final class WebViewCoordinator: NSObject, WKNavigationDelegate, WKScriptMessageH
     private var didReportGameReady = false
     private var isPollingGameReady = false
     private var recentProcessTerminations: [Date] = []
+    private var usesCanvasRenderer = false
 
     init(controller: BrowserController) {
         self.controller = controller
@@ -86,6 +117,13 @@ final class WebViewCoordinator: NSObject, WKNavigationDelegate, WKScriptMessageH
 
     func attach(_ webView: WKWebView) {
         controller.attach(webView)
+        controller.onSwitchToWebGL = { [weak self] in
+            self?.usesCanvasRenderer = false
+        }
+    }
+
+    func configureRendererRecovery(usesCanvasRenderer: Bool) {
+        self.usesCanvasRenderer = usesCanvasRenderer
     }
 
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
@@ -96,18 +134,38 @@ final class WebViewCoordinator: NSObject, WKNavigationDelegate, WKScriptMessageH
             now.timeIntervalSince($0) > 5 * 60
         }
         recentProcessTerminations.append(now)
-        // Avoid an OOM reload loop. The first three terminations in five
-        // minutes recover automatically; later ones wait for manual reload.
-        if recentProcessTerminations.count <= 3 {
-            let delay = min(
-                Double(recentProcessTerminations.count - 1),
-                2
-            )
-            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
-                webView.reload()
-            }
+        let terminationCount = recentProcessTerminations.count
+
+        // Canvas keeps large decoded surfaces in the WebContent process for this
+        // game. After its first unexplained termination, prefer GPU-backed WebGL
+        // for the rest of this session rather than repeatedly recreating Canvas.
+        let switchedRenderer = usesCanvasRenderer
+        if switchedRenderer {
+            usesCanvasRenderer = false
+            webView.customUserAgent = BrowserConstants.userAgentDesktop
         }
-        onProcessTerminated?()
+
+        guard terminationCount <= 3 else {
+            DiagnosticsStore.shared.recordRecoveryLimitExceeded(
+                terminationCount: terminationCount
+            )
+            onRecovery?(.automaticRecoveryPaused(terminationCount: terminationCount))
+            return
+        }
+
+        if switchedRenderer {
+            DiagnosticsStore.shared.recordCanvasToWebGLFallback()
+        }
+        onRecovery?(
+            .automaticReload(
+                attempt: terminationCount,
+                switchedFromCanvasToWebGL: switchedRenderer
+            )
+        )
+        let delay = min(Double(terminationCount - 1), 2)
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self, weak webView] in
+            self?.controller.purgeVolatileCaches { [weak webView] in webView?.reload() }
+        }
     }
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
         controller.navigationStarted(webView.url)
@@ -120,7 +178,23 @@ final class WebViewCoordinator: NSObject, WKNavigationDelegate, WKScriptMessageH
     }
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
         controller.navigationFinished(webView.url)
-        DiagnosticsStore.shared.recordNavigationError(error.localizedDescription)
+        reportNavigationError(error)
+    }
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        controller.navigationFinished(webView.url)
+        reportNavigationError(error)
+    }
+
+    private func reportNavigationError(_ error: Error) {
+        let nsError = error as NSError
+        // WebKit reports redirects, explicit reloads and superseded loads as
+        // cancellation. Those are normal control flow and must not present an
+        // SSL/network failure alert.
+        guard !(nsError.domain == NSURLErrorDomain
+                && nsError.code == NSURLErrorCancelled) else { return }
+        let message = "\(nsError.domain) (\(nsError.code))：\(nsError.localizedDescription)"
+        DiagnosticsStore.shared.recordNavigationError(message)
+        onNavigationError?(message)
     }
 
     private func detectGameReady(in webView: WKWebView) {

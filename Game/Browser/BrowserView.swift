@@ -11,7 +11,8 @@ struct BrowserView: UIViewRepresentable {
     let controller: BrowserController?
     let onNavigationFinished: ((WKWebView) -> Void)?
     let onGameReady: (() -> Void)?
-    let onProcessTerminated: (() -> Void)?
+    let onRecovery: ((WebContentRecoveryEvent) -> Void)?
+    let onNavigationError: ((String) -> Void)?
 
     init(url: URL,
          proxyPort: UInt16,
@@ -20,7 +21,8 @@ struct BrowserView: UIViewRepresentable {
          controller: BrowserController? = nil,
          onNavigationFinished: ((WKWebView) -> Void)? = nil,
          onGameReady: (() -> Void)? = nil,
-         onProcessTerminated: (() -> Void)? = nil) {
+         onRecovery: ((WebContentRecoveryEvent) -> Void)? = nil,
+         onNavigationError: ((String) -> Void)? = nil) {
         self.url = url
         self.proxyPort = proxyPort
         self.settings = settings
@@ -28,7 +30,8 @@ struct BrowserView: UIViewRepresentable {
         self.controller = controller
         self.onNavigationFinished = onNavigationFinished
         self.onGameReady = onGameReady
-        self.onProcessTerminated = onProcessTerminated
+        self.onRecovery = onRecovery
+        self.onNavigationError = onNavigationError
     }
 
     /// Runs in the DMM shell and in the game iframe. The shell is reduced to the
@@ -136,9 +139,13 @@ struct BrowserView: UIViewRepresentable {
         webView.scrollView.contentInsetAdjustmentBehavior = .never
         webView.isOpaque = true
         context.coordinator.attach(webView)
+        context.coordinator.configureRendererRecovery(
+            usesCanvasRenderer: settings.legacyRenderer
+        )
         context.coordinator.onNavigationFinished = onNavigationFinished
         context.coordinator.onGameReady = onGameReady
-        context.coordinator.onProcessTerminated = onProcessTerminated
+        context.coordinator.onRecovery = onRecovery
+        context.coordinator.onNavigationError = onNavigationError
         webView.load(URLRequest(url: url))
         return webView
     }
@@ -148,6 +155,7 @@ struct BrowserView: UIViewRepresentable {
     func updateUIView(_ webView: WKWebView, context: Context) {
         context.coordinator.onNavigationFinished = onNavigationFinished
         context.coordinator.onGameReady = onGameReady
-        context.coordinator.onProcessTerminated = onProcessTerminated
+        context.coordinator.onRecovery = onRecovery
+        context.coordinator.onNavigationError = onNavigationError
     }
 }

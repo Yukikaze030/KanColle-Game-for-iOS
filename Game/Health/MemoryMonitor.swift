@@ -54,6 +54,7 @@ import MachO
         ) { [weak self] _ in
             Task { @MainActor [weak self] in
                 self?.sample()
+                self?.diagnostics.recordSystemMemoryWarning()
                 self?.onSystemMemoryWarning?()
             }
         }

@@ -22,6 +22,46 @@ import GameCore
     private(set) var p3DatabaseSizeBytes: Int64 = 0
 
     private(set) var memorySamples: [MemorySample] = []
+    private(set) var sessionPeakMemoryMB: Double = 0
+    private(set) var systemMemoryWarningCount = 0
+    private(set) var recoveryLimitExceededCount: Int
+    private(set) var lastRecoveryLimitTerminationCount: Int?
+    private(set) var lastRecoveryLimitExceededAt: Date?
+    private(set) var canvasToWebGLFallbackCount: Int
+    private(set) var lastCanvasToWebGLFallbackAt: Date?
+
+    private let defaults: UserDefaults
+
+    private enum PersistenceKey {
+        static let recoveryLimitExceededCount = "diagnostics.recoveryLimitExceededCount"
+        static let lastRecoveryLimitTerminationCount = "diagnostics.lastRecoveryLimitTerminationCount"
+        static let lastRecoveryLimitExceededAt = "diagnostics.lastRecoveryLimitExceededAt"
+        static let canvasToWebGLFallbackCount = "diagnostics.canvasToWebGLFallbackCount"
+        static let lastCanvasToWebGLFallbackAt = "diagnostics.lastCanvasToWebGLFallbackAt"
+    }
+
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+        recoveryLimitExceededCount = defaults.integer(
+            forKey: PersistenceKey.recoveryLimitExceededCount
+        )
+        if defaults.object(
+            forKey: PersistenceKey.lastRecoveryLimitTerminationCount
+        ) != nil {
+            lastRecoveryLimitTerminationCount = defaults.integer(
+                forKey: PersistenceKey.lastRecoveryLimitTerminationCount
+            )
+        }
+        lastRecoveryLimitExceededAt = defaults.object(
+            forKey: PersistenceKey.lastRecoveryLimitExceededAt
+        ) as? Date
+        canvasToWebGLFallbackCount = defaults.integer(
+            forKey: PersistenceKey.canvasToWebGLFallbackCount
+        )
+        lastCanvasToWebGLFallbackAt = defaults.object(
+            forKey: PersistenceKey.lastCanvasToWebGLFallbackAt
+        ) as? Date
+    }
 
     func recordProcessTermination(at date: Date = Date()) {
         processTerminationCount += 1
@@ -74,9 +114,51 @@ import GameCore
 
     func recordMemorySample(residentMB: Double, at date: Date = Date()) {
         memorySamples.append(.init(date: date, residentMB: residentMB))
+        sessionPeakMemoryMB = max(sessionPeakMemoryMB, residentMB)
         if memorySamples.count > 60 {
             memorySamples.removeFirst(memorySamples.count - 60)
         }
+    }
+
+    var currentMemorySample: MemorySample? {
+        memorySamples.last
+    }
+
+    func recordSystemMemoryWarning() {
+        systemMemoryWarningCount += 1
+    }
+
+    /// Records that automatic WebContent recovery stopped after reaching its
+    /// retry limit. Persisted values remain available after relaunch.
+    func recordRecoveryLimitExceeded(
+        terminationCount: Int,
+        at date: Date = Date()
+    ) {
+        let safeTerminationCount = max(0, terminationCount)
+        recoveryLimitExceededCount += 1
+        lastRecoveryLimitTerminationCount = safeTerminationCount
+        lastRecoveryLimitExceededAt = date
+        defaults.set(
+            recoveryLimitExceededCount,
+            forKey: PersistenceKey.recoveryLimitExceededCount
+        )
+        defaults.set(
+            safeTerminationCount,
+            forKey: PersistenceKey.lastRecoveryLimitTerminationCount
+        )
+        defaults.set(date, forKey: PersistenceKey.lastRecoveryLimitExceededAt)
+    }
+
+    /// Records a Canvas to WebGL safety fallback. The aggregate count and
+    /// latest occurrence are persisted for diagnostics.
+    func recordCanvasToWebGLFallback(at date: Date = Date()) {
+        canvasToWebGLFallbackCount += 1
+        lastCanvasToWebGLFallbackAt = date
+        defaults.set(
+            canvasToWebGLFallbackCount,
+            forKey: PersistenceKey.canvasToWebGLFallbackCount
+        )
+        defaults.set(date, forKey: PersistenceKey.lastCanvasToWebGLFallbackAt)
     }
 
     // 代理日志保留为诊断信息，设置页只展示最近记录。
