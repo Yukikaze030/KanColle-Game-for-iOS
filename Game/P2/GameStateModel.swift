@@ -17,6 +17,7 @@ final class GameStateModel {
     private(set) var battleResult: BattleResultMerge?
     private(set) var battleLogs: [BattleLogEntry] = []
     private(set) var quests = QuestListSnapshot()
+    private(set) var questDefinitions: [Int: QuestDefinition] = [:]
     private(set) var battleRevision: Int64 = 0
     private(set) var questRevision: Int64 = 0
     private(set) var p3RecoveryIssues: [P3RecoveryIssue] = []
@@ -46,6 +47,7 @@ final class GameStateModel {
         battleResult: BattleResultMerge?,
         battleLogs: [BattleLogEntry],
         quests: QuestListSnapshot,
+        questDefinitions: [Int: QuestDefinition] = [:],
         battleRevision: Int64,
         questRevision: Int64,
         recoveryIssues: [P3RecoveryIssue] = []
@@ -56,6 +58,9 @@ final class GameStateModel {
         self.battleResult = battleResult
         self.battleLogs = Array(battleLogs.prefix(BattleLogProjector.maximumEntries))
         self.quests = quests
+        if !questDefinitions.isEmpty {
+            self.questDefinitions = questDefinitions
+        }
         self.battleRevision = battleRevision
         self.questRevision = questRevision
         self.p3RecoveryIssues = Array(recoveryIssues.prefix(20))
@@ -68,6 +73,7 @@ final class GameStateModel {
         battleResult: BattleResultMerge?,
         battleLogs: [BattleLogEntry],
         quests: QuestListSnapshot,
+        questDefinitions: [Int: QuestDefinition],
         battleRevision: Int64,
         questRevision: Int64
     ) {
@@ -77,6 +83,7 @@ final class GameStateModel {
             battleResult: battleResult,
             battleLogs: battleLogs,
             quests: quests,
+            questDefinitions: questDefinitions,
             battleRevision: battleRevision,
             questRevision: questRevision
         )

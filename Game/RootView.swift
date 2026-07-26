@@ -134,6 +134,13 @@ struct RootView: View {
                 ),
                 onClose: { presentedDestination = nil }
             )
+        } else if destination == .quest {
+            QuestOverlayView(
+                snapshot: gameStateModel.quests,
+                definitions: gameStateModel.questDefinitions,
+                isStale: gameStateModel.isStale,
+                onClose: { presentedDestination = nil }
+            )
         } else {
             NavigationStack {
                 Group {

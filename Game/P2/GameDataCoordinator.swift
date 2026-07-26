@@ -107,6 +107,7 @@ actor GameDataCoordinator {
                     battleResult: nil,
                     battleLogs: battleLogs,
                     quests: questSnapshot,
+                    questDefinitions: questDefinitions?.definitions ?? [:],
                     battleRevision: restored.battleRevision,
                     questRevision: questRevision,
                     recoveryIssues: restored.recoveryIssues
@@ -198,6 +199,7 @@ actor GameDataCoordinator {
                     battleResult: battleResult,
                     battleLogs: battleLogs,
                     quests: questSnapshot,
+                    questDefinitions: questDefinitions?.definitions ?? [:],
                     battleRevision: battleRevision,
                     questRevision: questRevision
                 )
