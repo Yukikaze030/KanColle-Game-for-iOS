@@ -53,11 +53,21 @@ public actor GameDataPipeline {
         requestBody: Data? = nil,
         eventID: String? = nil
     ) throws -> GameDataPipelineEvent {
+        let envelope = try parser.parse(endpoint: endpoint, response: response, requestBody: requestBody)
+        return ingest(envelope: envelope, eventID: eventID)
+    }
+
+    /// Accepts an already parsed envelope so the App coordinator can fan one
+    /// validated response into P2 fleet, P3 battle and P3 quest reducers without
+    /// parsing or retaining the raw response more than once.
+    public func ingest(
+        envelope: APIEnvelope,
+        eventID: String? = nil
+    ) -> GameDataPipelineEvent {
         if let eventID, recentEventIDSet.contains(eventID) {
             return .duplicate(eventID: eventID)
         }
 
-        let envelope = try parser.parse(endpoint: endpoint, response: response, requestBody: requestBody)
         if let result = envelope.apiResult, result != 1 {
             return .apiFailure(endpoint: envelope.endpoint, result: result, message: envelope.apiResultMessage)
         }

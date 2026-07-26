@@ -119,6 +119,22 @@ final class GameDataPipelineTests: XCTestCase {
         XCTAssertTrue(state.fleet.slotItems.isEmpty)
     }
 
+    func testAlreadyParsedEnvelopeUsesSameMutationAndDeduplicationPath() async throws {
+        let pipeline = GameDataPipeline()
+        let envelope = try APIEnvelopeParser().parse(
+            endpoint: "/api_port/port",
+            response: fixture("api_port.json")
+        )
+        let first = await pipeline.ingest(envelope: envelope, eventID: "parsed-port")
+        let duplicate = await pipeline.ingest(envelope: envelope, eventID: "parsed-port")
+        let state = await pipeline.state()
+
+        XCTAssertEqual(first, .portUpdated)
+        XCTAssertEqual(duplicate, .duplicate(eventID: "parsed-port"))
+        XCTAssertEqual(state.revision, 1)
+        XCTAssertEqual(state.fleet.decks[1]?.shipIDs, [101, 102])
+    }
+
     private func fixture(_ name: String) -> Data {
         let directory = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
