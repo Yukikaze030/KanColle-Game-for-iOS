@@ -50,11 +50,15 @@ public struct SettingsStore {
         set { defaults.set(newValue, forKey: "pref_legacy_renderer") }
     }
 
-    /// Enables HTTPS inspection for game-server hosts after the local root CA
-    /// has been installed and explicitly trusted by the user.
+    /// Enables experimental HTTPS resource inspection for game-server hosts.
+    ///
+    /// API parsing does not depend on this switch: WKWebView injects its API
+    /// bridge into the game iframe.  Use a new, opt-in key so installations
+    /// upgraded from the early builds (where MITM defaulted to on) return to the
+    /// reliable CONNECT tunnel instead of carrying the unsafe old value forward.
     public var mitmEnabled: Bool {
-        get { defaults.object(forKey: "pref_mitm_enabled") as? Bool ?? true }
-        set { defaults.set(newValue, forKey: "pref_mitm_enabled") }
+        get { defaults.object(forKey: "pref_experimental_mitm_enabled_v2") as? Bool ?? false }
+        set { defaults.set(newValue, forKey: "pref_experimental_mitm_enabled_v2") }
     }
 
     public var subtitleLocale: String {

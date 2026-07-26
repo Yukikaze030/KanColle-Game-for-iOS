@@ -61,7 +61,7 @@ final class ScriptPatcherTests: XCTestCase {
         XCTAssertFalse(output.contains("'out':abcdefghijklmnopqrstuvwxyz"))
     }
 
-    func testBridgeContainsIOSCaptureAxiosAndXHRInterceptors() {
+    func testBridgeContainsIOSCaptureAxiosXHRAndFetchInterceptors() {
         let output = patcher.patchMainScript("var x=1;")
 
         XCTAssertTrue(output.contains("window.webkit"))
@@ -70,11 +70,31 @@ final class ScriptPatcherTests: XCTestCase {
         XCTAssertTrue(output.contains(#"{type:"kcsapi",endpoint:"#))
         XCTAssertTrue(output.contains("axios.interceptors.response.use"))
         XCTAssertTrue(output.contains("XMLHttpRequest.prototype.open"))
+        XCTAssertTrue(output.contains("window.fetch"))
+        XCTAssertTrue(output.contains("response.clone()"))
+        XCTAssertTrue(output.contains("copy.text()"))
         XCTAssertTrue(output.contains(#"response.indexOf("svdata=")"#))
         XCTAssertTrue(output.contains(#"host.endsWith(".kancolle-server.com")"#))
         XCTAssertTrue(output.contains(#"host==="ooi.moe""#))
         XCTAssertFalse(output.contains("GotoBrowser.kcs_xhr_intercept"))
         XCTAssertFalse(output.contains("GotoBrowser.kcs_process_canvas_dataurl"))
+    }
+
+    func testPublicBridgeScriptCanBeInjectedBeforeMainScriptAndPatchedFallbackRemainsGuarded() {
+        let bridge = ScriptPatcher.bridgeScript
+
+        XCTAssertTrue(bridge.contains("if(window.__gotoIOSBridgeInstalled)return"))
+        XCTAssertTrue(bridge.contains("window.__gotoIOSBridgeInstalled=true"))
+        XCTAssertTrue(bridge.contains("XMLHttpRequest.prototype.send"))
+        XCTAssertTrue(bridge.contains("window.__gotoIOSFetchInstalled"))
+
+        let mainScript = patcher.patchMainScript(bridge + "\nvar gameStarted=true;")
+        XCTAssertTrue(mainScript.contains("__GOTO_IOS_BRIDGE_PATCH_V1__"))
+        XCTAssertEqual(
+            mainScript.components(separatedBy: "window.__gotoIOSBridgeInstalled=true").count,
+            3,
+            "main.js keeps its fallback copy; the runtime guard prevents double installation"
+        )
     }
 
     func testGameLayoutHidesNonGameElementsAndFits1200By720() {

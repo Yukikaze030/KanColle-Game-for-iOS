@@ -12,7 +12,7 @@ struct CertificateInstallView: View {
             installationStepsSection
             retrySection
         }
-        .navigationTitle("安装游戏加速证书")
+        .navigationTitle("可选资源解密证书")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .confirmationAction) {
@@ -100,7 +100,7 @@ struct CertificateInstallView: View {
         } header: {
             Text("导出")
         } footer: {
-            Text("根证书只用于解密舰 C 游戏服务器流量。根私钥保存在本机 Keychain，不会随 .cer 文件导出。")
+            Text("此证书仅供实验性资源缓存与脚本补丁使用，不是登录或舰队/战斗/任务数据解析的必要条件。DMM 黑屏时请关闭“实验性 HTTPS 资源解密”。根私钥仅保存在本机 Keychain。")
         }
     }
 
@@ -190,7 +190,7 @@ struct CertificateInstallView: View {
         case .checking:
             return "正在刷新 trustd，并分别验证系统根证书完全信任和动态服务器证书链。"
         case .trusted:
-            return "游戏服务器 HTTPS 流量可以安全进入本地缓存与补丁流程。"
+            return "可以手动启用实验性 HTTPS 资源解密；正常游戏与数据解析无需启用。"
         case .untrusted:
             return "请按下方步骤安装证书并启用完全信任。"
         case .failed:

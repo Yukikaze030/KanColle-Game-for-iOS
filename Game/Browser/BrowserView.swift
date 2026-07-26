@@ -88,10 +88,18 @@ struct BrowserView: UIViewRepresentable {
         }
         // viewport 依赖 document.head，故在 documentEnd 注入；正式布局脚本必须
         // 同时进入 DMM 外壳与游戏 iframe，才能隐藏页面杂项并只保留游戏画面。
+        // API 桥必须早于游戏脚本进入所有 frame，直接包装 XHR/fetch；因此即使
+        // HTTPS 只能以 CONNECT 盲隧道通过本地代理，也仍能在页面进程内采集 kcsapi。
+        let apiBridge = WKUserScript(
+            source: ScriptPatcher.bridgeScript,
+            injectionTime: .atDocumentStart,
+            forMainFrameOnly: false
+        )
         let viewport = WKUserScript(source: BrowserConstants.viewportMetaScript,
                                     injectionTime: .atDocumentEnd, forMainFrameOnly: true)
         let gameLayout = WKUserScript(source: Self.gameLayoutScript,
                                       injectionTime: .atDocumentEnd, forMainFrameOnly: false)
+        config.userContentController.addUserScript(apiBridge)
         config.userContentController.addUserScript(viewport)
         config.userContentController.addUserScript(gameLayout)
         config.userContentController.add(bridge, name: "gotoBrowser")

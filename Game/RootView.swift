@@ -204,6 +204,9 @@ struct RootView: View {
     @MainActor
     private func configureMITMForThisLaunch() async {
         guard settings.mitmEnabled else {
+            // DMM/game HTTPS stays end-to-end encrypted. API responses are
+            // collected by the all-frame WKUserScript bridge, so fleet/battle/
+            // quest parsing remains available without terminating TLS locally.
             proxy.mitmCA = nil
             return
         }

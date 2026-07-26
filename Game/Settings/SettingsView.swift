@@ -255,16 +255,16 @@ struct SettingsView: View {
 
     private var certificateSection: some View {
         Section {
-            Toggle("启用 HTTPS 游戏流量解析", isOn: $mitmEnabled)
+            Toggle("实验性 HTTPS 资源解密", isOn: $mitmEnabled)
             NavigationLink {
                 CertificateInstallView()
             } label: {
-                Label("安装与检测根证书", systemImage: "checkmark.shield")
+                Label("安装与检测可选根证书", systemImage: "checkmark.shield")
             }
         } header: {
-            Text("MITM 证书")
+            Text("实验性资源补丁")
         } footer: {
-            Text("仅解析舰 C 游戏服务器域名。关闭后 HTTPS 请求使用普通加密隧道。")
+            Text("默认关闭，DMM 使用普通加密隧道，舰队/战斗/任务数据仍由网页桥接解析。仅资源缓存或脚本补丁需要解密时启用；若出现黑屏请关闭并重新进入游戏。")
         }
         .onChange(of: mitmEnabled) { _, value in update { $0.mitmEnabled = value } }
     }

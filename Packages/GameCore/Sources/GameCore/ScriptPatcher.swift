@@ -255,10 +255,15 @@ public struct ScriptPatcher: Sendable {
     })();
     """#
 
-    /// Installs mute/capture listeners and both axios and raw XHR kcsapi
-    /// interception. Reports are restricted to known game hosts and `svdata=`
-    /// responses before crossing the WKScriptMessage bridge.
-    private static let bridgeScript = #"""
+    /// Installs mute/capture listeners plus axios, raw XHR and fetch kcsapi
+    /// interception. BrowserView also injects this at document start in every
+    /// frame, so API collection does not depend on observing decrypted HTTPS
+    /// responses in the local proxy. The main.js patch still appends the same
+    /// script as a fallback; `__gotoIOSBridgeInstalled` makes both paths safe.
+    ///
+    /// Reports are restricted to known game hosts and `svdata=` responses
+    /// before crossing the WKScriptMessage bridge.
+    public static let bridgeScript = #"""
     (function(){
     if(window.__gotoIOSBridgeInstalled)return;
     window.__gotoIOSBridgeInstalled=true;
@@ -325,6 +330,27 @@ public struct ScriptPatcher: Sendable {
             return originalSend.apply(this,arguments);
         };
         XMLHttpRequest.prototype.__gotoIOSXHRInstalled=true;
+    }
+    if(window.fetch&&!window.__gotoIOSFetchInstalled){
+        var originalFetch=window.fetch;
+        window.fetch=function(input,init){
+            var endpoint=typeof input==="string"?input:(input&&input.url)||"";
+            var request=init&&init.body;
+            var result=originalFetch.apply(this,arguments);
+            if(String(endpoint).indexOf("kcsapi")<0)return result;
+            return result.then(function(response){
+                try {
+                    var copy=response.clone();
+                    copy.text().then(function(text){
+                        var host=window.location.hostname;
+                        try{host=new URL(endpoint,window.location.href).hostname;}catch(_){}
+                        report(host,endpoint,request,text);
+                    }).catch(function(){});
+                } catch (_) {}
+                return response;
+            });
+        };
+        window.__gotoIOSFetchInstalled=true;
     }
     })();
     """#

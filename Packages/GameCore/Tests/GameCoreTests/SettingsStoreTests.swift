@@ -19,7 +19,7 @@ final class SettingsStoreTests: XCTestCase {
         XCTAssertEqual(s.subtitleFontSize, 18)
         XCTAssertEqual(s.cursorMode, .touch)
         XCTAssertTrue(s.legacyRenderer)
-        XCTAssertTrue(s.mitmEnabled)
+        XCTAssertFalse(s.mitmEnabled)
         XCTAssertTrue(s.downloadRetry)
         XCTAssertTrue(s.memoryWarnEnabled)
         XCTAssertFalse(s.heavyDamageLockedOnly)
@@ -83,7 +83,7 @@ final class SettingsStoreTests: XCTestCase {
         s.alterGadget = true
         s.alterGadgetEndpoint = "https://cache.example.test/"
         s.downloadRetry = false
-        s.mitmEnabled = false
+        s.mitmEnabled = true
         s.memoryWarnEnabled = false
         s.memoryWarnThresholdMB = 768
         let s2 = SettingsStore(defaults: d)
@@ -99,10 +99,19 @@ final class SettingsStoreTests: XCTestCase {
         XCTAssertTrue(s2.alterGadget)
         XCTAssertEqual(s2.alterGadgetEndpoint, "https://cache.example.test/")
         XCTAssertFalse(s2.downloadRetry)
-        XCTAssertFalse(s2.mitmEnabled)
+        XCTAssertTrue(s2.mitmEnabled)
         XCTAssertFalse(s2.memoryWarnEnabled)
         XCTAssertEqual(s2.memoryWarnThresholdMB, 768)
     }
+
+    func testLegacyMitmOptInIsNotCarriedIntoSafeDefault() {
+        let defaults = makeDefaults()
+        defaults.set(true, forKey: "pref_mitm_enabled")
+
+        let settings = SettingsStore(defaults: defaults)
+        XCTAssertFalse(settings.mitmEnabled)
+    }
+
     func testBlockRulesPorted() {
         XCTAssertTrue(BrowserConstants.blockRules.contains("doubleclick.net"))
         XCTAssertEqual(BrowserConstants.blockRules.count, 7)
