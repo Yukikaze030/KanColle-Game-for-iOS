@@ -60,6 +60,7 @@ struct RootView: View {
                         proxyPort: proxy.port,
                         settings: settings,
                         bridge: bridge,
+                        gameStateModel: gameStateModel,
                         subtitleCoordinator: subtitleCoordinator,
                         onNavigationFinished: { webView in
                             loginAutomation.handlePageFinished(

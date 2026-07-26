@@ -13,6 +13,7 @@ final class P3SettingsTests: XCTestCase {
         XCTAssertEqual(settings.battleLogRetentionCount, 50)
         XCTAssertTrue(settings.exactQuestTrackingEnabled)
         XCTAssertTrue(settings.questCompletionBannerEnabled)
+        XCTAssertTrue(settings.parsedDataHUDEnabled)
     }
 
     func testOnlyDocumentedRetentionCapacitiesAreAccepted() {
@@ -27,5 +28,8 @@ final class P3SettingsTests: XCTestCase {
         }
         settings.battleLogRetentionCount = Int.max
         XCTAssertEqual(settings.battleLogRetentionCount, 50)
+
+        settings.parsedDataHUDEnabled = false
+        XCTAssertFalse(SettingsStore(defaults: defaults).parsedDataHUDEnabled)
     }
 }

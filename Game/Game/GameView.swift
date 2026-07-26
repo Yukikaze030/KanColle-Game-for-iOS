@@ -7,6 +7,7 @@ struct GameView: View {
     let proxyPort: UInt16
     let settings: SettingsStore
     let bridge: JSBridge
+    let gameStateModel: GameStateModel
     @ObservedObject var subtitleCoordinator: SubtitleCoordinator
     let onNavigationFinished: (WKWebView) -> Void
     let onOpenDestination: (GameMenuDestination) -> Void
@@ -24,6 +25,7 @@ struct GameView: View {
          proxyPort: UInt16,
          settings: SettingsStore,
          bridge: JSBridge,
+         gameStateModel: GameStateModel,
          subtitleCoordinator: SubtitleCoordinator,
          onNavigationFinished: @escaping (WKWebView) -> Void = { _ in },
          onOpenDestination: @escaping (GameMenuDestination) -> Void,
@@ -32,6 +34,7 @@ struct GameView: View {
         self.proxyPort = proxyPort
         self.settings = settings
         self.bridge = bridge
+        self.gameStateModel = gameStateModel
         self.subtitleCoordinator = subtitleCoordinator
         self.onNavigationFinished = onNavigationFinished
         self.onOpenDestination = onOpenDestination
@@ -65,6 +68,17 @@ struct GameView: View {
                 )
                 .frame(maxHeight: .infinity, alignment: .top)
                 .ignoresSafeArea(edges: .top)
+            }
+
+            if isGameReady, settings.parsedDataHUDEnabled {
+                ParsedDataHUDView(
+                    model: gameStateModel,
+                    onOpenDetail: openDestination
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .padding(.leading, 18)
+                .padding(.top, 14)
+                .transition(.move(edge: .leading).combined(with: .opacity))
             }
 
             if isGameReady, showsMenu {

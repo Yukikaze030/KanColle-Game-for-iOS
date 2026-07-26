@@ -41,6 +41,7 @@ struct SettingsView: View {
     @State private var battleLogRetentionCount: Int
     @State private var exactQuestTrackingEnabled: Bool
     @State private var questCompletionBannerEnabled: Bool
+    @State private var parsedDataHUDEnabled: Bool
 
     @State private var isClearingCache = false
     @State private var confirmation: Confirmation?
@@ -80,6 +81,7 @@ struct SettingsView: View {
         _battleLogRetentionCount = State(initialValue: settings.battleLogRetentionCount)
         _exactQuestTrackingEnabled = State(initialValue: settings.exactQuestTrackingEnabled)
         _questCompletionBannerEnabled = State(initialValue: settings.questCompletionBannerEnabled)
+        _parsedDataHUDEnabled = State(initialValue: settings.parsedDataHUDEnabled)
     }
 
     var body: some View {
@@ -129,6 +131,7 @@ struct SettingsView: View {
     private var battleQuestSection: some View {
         Section {
             Toggle("战斗覆盖自动刷新", isOn: $battleOverlayAutoRefresh)
+            Toggle("显示解析数据悬浮窗", isOn: $parsedDataHUDEnabled)
             Toggle("显示敌方装备详情", isOn: $showEnemyEquipmentDetails)
             Picker("保留战斗日志", selection: $battleLogRetentionCount) {
                 Text("20 场").tag(20)
@@ -144,6 +147,9 @@ struct SettingsView: View {
         }
         .onChange(of: battleOverlayAutoRefresh) { _, value in
             update { $0.battleOverlayAutoRefresh = value }
+        }
+        .onChange(of: parsedDataHUDEnabled) { _, value in
+            update { $0.parsedDataHUDEnabled = value }
         }
         .onChange(of: showEnemyEquipmentDetails) { _, value in
             update { $0.showEnemyEquipmentDetails = value }

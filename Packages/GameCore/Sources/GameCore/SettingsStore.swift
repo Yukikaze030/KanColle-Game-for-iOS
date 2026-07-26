@@ -170,6 +170,11 @@ public struct SettingsStore {
         set { defaults.set(newValue, forKey: "pref_p3_quest_completion_banner") }
     }
 
+    public var parsedDataHUDEnabled: Bool {
+        get { defaults.object(forKey: "pref_parsed_data_hud") as? Bool ?? true }
+        set { defaults.set(newValue, forKey: "pref_parsed_data_hud") }
+    }
+
     /// Setting `nil` removes the key (UserDefaults.removeObject semantics).
     public var latestURL: String? {
         get { defaults.string(forKey: "pref_latest_url") }
