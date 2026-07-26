@@ -36,6 +36,11 @@ struct SettingsView: View {
     @State private var mitmEnabled: Bool
     @State private var memoryWarnEnabled: Bool
     @State private var memoryWarnThresholdMB: Int
+    @State private var battleOverlayAutoRefresh: Bool
+    @State private var showEnemyEquipmentDetails: Bool
+    @State private var battleLogRetentionCount: Int
+    @State private var exactQuestTrackingEnabled: Bool
+    @State private var questCompletionBannerEnabled: Bool
 
     @State private var isClearingCache = false
     @State private var confirmation: Confirmation?
@@ -70,6 +75,11 @@ struct SettingsView: View {
         _mitmEnabled = State(initialValue: settings.mitmEnabled)
         _memoryWarnEnabled = State(initialValue: settings.memoryWarnEnabled)
         _memoryWarnThresholdMB = State(initialValue: settings.memoryWarnThresholdMB)
+        _battleOverlayAutoRefresh = State(initialValue: settings.battleOverlayAutoRefresh)
+        _showEnemyEquipmentDetails = State(initialValue: settings.showEnemyEquipmentDetails)
+        _battleLogRetentionCount = State(initialValue: settings.battleLogRetentionCount)
+        _exactQuestTrackingEnabled = State(initialValue: settings.exactQuestTrackingEnabled)
+        _questCompletionBannerEnabled = State(initialValue: settings.questCompletionBannerEnabled)
     }
 
     var body: some View {
@@ -80,6 +90,7 @@ struct SettingsView: View {
             networkSection
             certificateSection
             NotificationSettingsSection(settings: settings)
+            battleQuestSection
             memorySection
             diagnosticsSection
             privacySection
@@ -112,6 +123,39 @@ struct SettingsView: View {
             Button("好", role: .cancel) {}
         } message: {
             Text(errorMessage ?? "")
+        }
+    }
+
+    private var battleQuestSection: some View {
+        Section {
+            Toggle("战斗覆盖自动刷新", isOn: $battleOverlayAutoRefresh)
+            Toggle("显示敌方装备详情", isOn: $showEnemyEquipmentDetails)
+            Picker("保留战斗日志", selection: $battleLogRetentionCount) {
+                Text("20 场").tag(20)
+                Text("50 场").tag(50)
+                Text("100 场").tag(100)
+            }
+            Toggle("任务精确追踪", isOn: $exactQuestTrackingEnabled)
+            Toggle("任务完成提示", isOn: $questCompletionBannerEnabled)
+        } header: {
+            Text("战斗与任务")
+        } footer: {
+            Text("任务完成提示仅在 App 内显示，不占用本地通知配额。敌方装备详情默认关闭以减少常驻内存。")
+        }
+        .onChange(of: battleOverlayAutoRefresh) { _, value in
+            update { $0.battleOverlayAutoRefresh = value }
+        }
+        .onChange(of: showEnemyEquipmentDetails) { _, value in
+            update { $0.showEnemyEquipmentDetails = value }
+        }
+        .onChange(of: battleLogRetentionCount) { _, value in
+            update { $0.battleLogRetentionCount = value }
+        }
+        .onChange(of: exactQuestTrackingEnabled) { _, value in
+            update { $0.exactQuestTrackingEnabled = value }
+        }
+        .onChange(of: questCompletionBannerEnabled) { _, value in
+            update { $0.questCompletionBannerEnabled = value }
         }
     }
 
@@ -244,6 +288,12 @@ struct SettingsView: View {
         Section("诊断") {
             LabeledContent("WebView 终止次数", value: "\(diagnostics.processTerminationCount)")
             LabeledContent("最近终止时间", value: formattedTerminationDate)
+            LabeledContent("最近游戏端点", value: diagnostics.latestGameEndpoint ?? "无")
+            LabeledContent("战斗 revision", value: "\(diagnostics.battleRevision)")
+            LabeledContent("任务 revision", value: "\(diagnostics.questRevision)")
+            LabeledContent("P3 warning", value: "\(diagnostics.p3WarningCount)")
+            LabeledContent("评级偏差", value: "\(diagnostics.rankMismatchCount)")
+            LabeledContent("P3 数据库", value: formattedDatabaseSize)
             if let latestError = diagnostics.navigationErrors.last {
                 VStack(alignment: .leading, spacing: 5) {
                     Text("最近错误")
@@ -300,6 +350,13 @@ struct SettingsView: View {
             forInfoDictionaryKey: "CFBundleVersion"
         ) as? String ?? "—"
         return "\(version) (\(build))"
+    }
+
+    private var formattedDatabaseSize: String {
+        ByteCountFormatter.string(
+            fromByteCount: diagnostics.p3DatabaseSizeBytes,
+            countStyle: .file
+        )
     }
 
     private func update(_ mutation: (inout SettingsStore) -> Void) {

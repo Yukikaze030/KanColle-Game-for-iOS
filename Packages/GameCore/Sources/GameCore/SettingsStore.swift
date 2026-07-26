@@ -138,6 +138,38 @@ public struct SettingsStore {
         set { defaults.set(newValue, forKey: "pref_notify_akashi") }
     }
 
+    public var battleOverlayAutoRefresh: Bool {
+        get { defaults.object(forKey: "pref_p3_battle_auto_refresh") as? Bool ?? true }
+        set { defaults.set(newValue, forKey: "pref_p3_battle_auto_refresh") }
+    }
+
+    public var showEnemyEquipmentDetails: Bool {
+        get { defaults.bool(forKey: "pref_p3_enemy_equipment") }
+        set { defaults.set(newValue, forKey: "pref_p3_enemy_equipment") }
+    }
+
+    /// Supported values intentionally match the bounded P3 log store options.
+    public var battleLogRetentionCount: Int {
+        get {
+            let value = defaults.object(forKey: "pref_p3_battle_log_count") as? Int ?? 50
+            return [20, 50, 100].contains(value) ? value : 50
+        }
+        set {
+            defaults.set([20, 50, 100].contains(newValue) ? newValue : 50,
+                         forKey: "pref_p3_battle_log_count")
+        }
+    }
+
+    public var exactQuestTrackingEnabled: Bool {
+        get { defaults.object(forKey: "pref_p3_quest_exact_tracking") as? Bool ?? true }
+        set { defaults.set(newValue, forKey: "pref_p3_quest_exact_tracking") }
+    }
+
+    public var questCompletionBannerEnabled: Bool {
+        get { defaults.object(forKey: "pref_p3_quest_completion_banner") as? Bool ?? true }
+        set { defaults.set(newValue, forKey: "pref_p3_quest_completion_banner") }
+    }
+
     /// Setting `nil` removes the key (UserDefaults.removeObject semantics).
     public var latestURL: String? {
         get { defaults.string(forKey: "pref_latest_url") }

@@ -29,6 +29,11 @@ final class SettingsStoreTests: XCTestCase {
         XCTAssertTrue(s.dockingNotificationsEnabled)
         XCTAssertTrue(s.moraleNotificationsEnabled)
         XCTAssertTrue(s.akashiNotificationsEnabled)
+        XCTAssertTrue(s.battleOverlayAutoRefresh)
+        XCTAssertFalse(s.showEnemyEquipmentDetails)
+        XCTAssertEqual(s.battleLogRetentionCount, 50)
+        XCTAssertTrue(s.exactQuestTrackingEnabled)
+        XCTAssertTrue(s.questCompletionBannerEnabled)
         XCTAssertEqual(s.alterGadgetEndpoint, BrowserConstants.defaultAlterGadgetURL)
     }
     func testP2SafetySettingsClampUnsafeValues() {
@@ -42,6 +47,26 @@ final class SettingsStoreTests: XCTestCase {
 
         s.notificationLeadTimeSeconds = -5
         XCTAssertEqual(s.notificationLeadTimeSeconds, 0)
+    }
+
+    func testP3SettingsRoundTripAndRetentionValidation() {
+        let defaults = makeDefaults()
+        var settings = SettingsStore(defaults: defaults)
+        settings.battleOverlayAutoRefresh = false
+        settings.showEnemyEquipmentDetails = true
+        settings.battleLogRetentionCount = 100
+        settings.exactQuestTrackingEnabled = false
+        settings.questCompletionBannerEnabled = false
+
+        let restored = SettingsStore(defaults: defaults)
+        XCTAssertFalse(restored.battleOverlayAutoRefresh)
+        XCTAssertTrue(restored.showEnemyEquipmentDetails)
+        XCTAssertEqual(restored.battleLogRetentionCount, 100)
+        XCTAssertFalse(restored.exactQuestTrackingEnabled)
+        XCTAssertFalse(restored.questCompletionBannerEnabled)
+
+        settings.battleLogRetentionCount = 99
+        XCTAssertEqual(settings.battleLogRetentionCount, 50)
     }
     func testRoundTrip() {
         let d = makeDefaults()
