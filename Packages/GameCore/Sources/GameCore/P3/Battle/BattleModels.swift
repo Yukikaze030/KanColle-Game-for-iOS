@@ -20,6 +20,48 @@ public enum BattleShipIdentity: Codable, Hashable, Sendable {
     case enemyMasterShip(masterID: Int?, position: BattleShipPosition)
 }
 
+public enum BattleDameconKind: Int, Codable, Sendable {
+    /// 応急修理要員. P3 intentionally restores 20%, not Android's legacy 25%.
+    case repairTeam = 42
+    /// 応急修理女神.
+    case goddess = 43
+}
+
+public struct BattleDameconState: Codable, Equatable, Sendable {
+    public let itemInstanceID: Int
+    public let kind: BattleDameconKind
+    public var consumed: Bool
+    public var triggeredPhase: BattlePhaseKind?
+
+    public init(
+        itemInstanceID: Int,
+        kind: BattleDameconKind,
+        consumed: Bool = false,
+        triggeredPhase: BattlePhaseKind? = nil
+    ) {
+        self.itemInstanceID = itemInstanceID
+        self.kind = kind
+        self.consumed = consumed
+        self.triggeredPhase = triggeredPhase
+    }
+}
+
+public struct DameconActivation: Codable, Equatable, Sendable {
+    public let itemInstanceID: Int
+    public let masterItemID: Int
+    public let ship: BattleShipPosition
+    public let phase: BattlePhaseKind
+    public let restoredHP: Int
+}
+
+public enum BattleRetreatRisk: String, Codable, Sendable {
+    case safe
+    case heavyDamagedWithDamecon
+    case heavyDamaged
+    case sunk
+    case unknown
+}
+
 public struct BattleShipState: Codable, Equatable, Identifiable, Sendable {
     public var id: BattleShipIdentity
     public let position: BattleShipPosition
@@ -29,6 +71,7 @@ public struct BattleShipState: Codable, Equatable, Identifiable, Sendable {
     public let initialHP: Int
     public var currentHP: Int
     public var escaped: Bool
+    public var damecon: BattleDameconState?
 
     public init(
         id: BattleShipIdentity,
@@ -38,7 +81,8 @@ public struct BattleShipState: Codable, Equatable, Identifiable, Sendable {
         maximumHP: Int,
         initialHP: Int,
         currentHP: Int,
-        escaped: Bool = false
+        escaped: Bool = false,
+        damecon: BattleDameconState? = nil
     ) {
         self.id = id
         self.position = position
@@ -48,6 +92,7 @@ public struct BattleShipState: Codable, Equatable, Identifiable, Sendable {
         self.initialHP = initialHP
         self.currentHP = currentHP
         self.escaped = escaped
+        self.damecon = damecon
     }
 }
 
@@ -125,4 +170,5 @@ public struct BattleSnapshot: Codable, Equatable, Sendable {
     public var status: BattleSessionStatus
     public var warnings: [BattleParseWarning]
     public var revision: Int64
+    public var dameconActivations: [DameconActivation] = []
 }

@@ -111,7 +111,9 @@ public struct BattleSessionReducer: Sendable {
         eventID: String? = nil,
         friendlyMainShipIDs: [Int] = [],
         friendlyEscortShipIDs: [Int] = [],
-        map: BattleMapPosition? = nil
+        map: BattleMapPosition? = nil,
+        fleetSnapshot: FleetSnapshot? = nil,
+        sortieDeckID: Int? = nil
     ) -> BattleSessionReduction {
         if let eventID, appliedResponseIDs.contains(eventID) {
             return .duplicate(eventID: eventID)
@@ -134,6 +136,19 @@ public struct BattleSessionReducer: Sendable {
             remember(eventID)
             transitions = []
             return .completed(snapshot: current)
+        }
+
+        if endpoint.known == .sortieGoback || endpoint.known == .combinedGoback {
+            guard var current = snapshot, current.status != .completed else {
+                return outOfOrder(endpoint, expected: "active battle before retreat")
+            }
+            applyRetreat(data: envelope.data, to: &current)
+            advanceRevision(of: &current)
+            current.endpoint = endpoint
+            snapshot = current
+            transitions = []
+            remember(eventID)
+            return .continued(snapshot: current, transitions: [])
         }
 
         guard let data = envelope.data,
@@ -162,17 +177,30 @@ public struct BattleSessionReducer: Sendable {
             return .ignored(endpoint: endpoint.path)
         }
 
+        let resolvedMainIDs = resolvedMainShipIDs(
+            explicit: friendlyMainShipIDs,
+            snapshot: fleetSnapshot,
+            deckID: sortieDeckID ?? map?.deckID
+        )
+        let resolvedEscortIDs = resolvedEscortShipIDs(
+            explicit: friendlyEscortShipIDs,
+            endpoint: endpoint,
+            snapshot: fleetSnapshot
+        )
         guard var fresh = decoder.initializeSession(
             endpoint: endpoint,
             data: data,
-            friendlyMainShipIDs: friendlyMainShipIDs,
-            friendlyEscortShipIDs: friendlyEscortShipIDs,
+            friendlyMainShipIDs: resolvedMainIDs,
+            friendlyEscortShipIDs: resolvedEscortIDs,
             map: map,
             revision: revision &+ 1
         ) else {
             return .rejected(endpoint: endpoint.path, warnings: [
                 .init(field: "initialization", message: "missing valid battle HP arrays")
             ])
+        }
+        if let fleetSnapshot {
+            DameconResolver.freezeLoadout(in: &fresh, from: fleetSnapshot)
         }
 
         if var old = snapshot {
@@ -233,6 +261,85 @@ public struct BattleSessionReducer: Sendable {
 
     private mutating func remember(_ eventID: String?) {
         if let eventID { appliedResponseIDs.insert(eventID) }
+    }
+
+    private func resolvedMainShipIDs(
+        explicit: [Int],
+        snapshot: FleetSnapshot?,
+        deckID: Int?
+    ) -> [Int] {
+        if !explicit.isEmpty { return explicit }
+        guard let snapshot, let deckID else { return [] }
+        return snapshot.decks[deckID]?.shipIDs ?? []
+    }
+
+    private func resolvedEscortShipIDs(
+        explicit: [Int],
+        endpoint: BattleEndpoint,
+        snapshot: FleetSnapshot?
+    ) -> [Int] {
+        if !explicit.isEmpty { return explicit }
+        guard endpoint.usesFriendlyCombinedFleet,
+              let snapshot, snapshot.combinedFleetType > 0 else { return [] }
+        return snapshot.decks[2]?.shipIDs ?? []
+    }
+
+    private func applyRetreat(
+        data: JSONValue?,
+        to snapshot: inout BattleSnapshot
+    ) {
+        guard let object = data?.objectValue else {
+            snapshot.warnings.append(.init(field: "goback_port", message: "missing retreat data"))
+            return
+        }
+        let mainOrGlobal = object.intArray("api_escape_idx")
+        let combinedLocal = object.intArray("api_escape_idx_combined")
+
+        for rawIndex in mainOrGlobal {
+            let position: BattleShipPosition
+            if rawIndex > 6 {
+                position = .init(component: .escort, index: rawIndex - 7)
+            } else {
+                position = .init(component: .main, index: rawIndex - 1)
+            }
+            markEscaped(position, in: &snapshot)
+        }
+        for rawIndex in combinedLocal {
+            markEscaped(
+                .init(component: .escort, index: rawIndex - 1),
+                in: &snapshot
+            )
+        }
+    }
+
+    private func markEscaped(
+        _ position: BattleShipPosition,
+        in snapshot: inout BattleSnapshot
+    ) {
+        guard position.index >= 0 else {
+            snapshot.warnings.append(.init(field: "goback_port", message: "invalid retreat index"))
+            return
+        }
+        switch position.component {
+        case .main:
+            guard snapshot.friendlyMain.ships.indices.contains(position.index) else {
+                snapshot.warnings.append(.init(
+                    field: "goback_port",
+                    message: "retreat target out of range: main.\(position.index)"
+                ))
+                return
+            }
+            snapshot.friendlyMain.ships[position.index].escaped = true
+        case .escort:
+            guard snapshot.friendlyEscort?.ships.indices.contains(position.index) == true else {
+                snapshot.warnings.append(.init(
+                    field: "goback_port",
+                    message: "retreat target out of range: escort.\(position.index)"
+                ))
+                return
+            }
+            snapshot.friendlyEscort!.ships[position.index].escaped = true
+        }
     }
 
     private func outOfOrder(

@@ -1,0 +1,15 @@
+{
+  "api_result": 1,
+  "api_data": {
+    "api_f_maxhps": [-1, 41],
+    "api_f_nowhps": [-1, 1],
+    "api_e_maxhps": [-1, 20],
+    "api_e_nowhps": [-1, 20],
+    "api_ship_ke": [501],
+    "api_hougeki1": {
+      "api_at_eflag": [1],
+      "api_df_list": [[0]],
+      "api_damage": [[1]]
+    }
+  }
+}
