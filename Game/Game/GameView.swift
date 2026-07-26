@@ -3,6 +3,8 @@ import WebKit
 import GameCore
 
 struct GameView: View {
+    @Environment(\.scenePhase) private var scenePhase
+
     let url: URL
     let proxyPort: UInt16
     let settings: SettingsStore
@@ -21,6 +23,7 @@ struct GameView: View {
     @State private var recoveryMessage: String?
     @State private var recoveryPausedCount: Int?
     @State private var navigationError: String?
+    @State private var browserGeneration = 0
     @State private var memoryMonitor: MemoryMonitor
 
     init(url: URL,
@@ -62,6 +65,7 @@ struct GameView: View {
                         onGameReady: gameDidBecomeReady,
                         onRecovery: handleRecovery,
                         onNavigationError: { navigationError = $0 })
+                .id(browserGeneration)
                 .ignoresSafeArea()
 
             if settings.subtitleEnabled {
@@ -138,6 +142,14 @@ struct GameView: View {
             memoryMonitor.stop()
             if isGameReady { OrientationLock.releaseLandscape() }
         }
+        .onChange(of: scenePhase) { _, phase in
+            // Reclaim only disposable HTTP/WebKit cache state while the game is
+            // suspended. Active Canvas/WebGL resources belong to WebContent and
+            // cannot be safely or forcibly collected through public APIs.
+            if phase == .background {
+                browserController.purgeVolatileCaches()
+            }
+        }
         .alert("内存占用过高", isPresented: $showsMemoryWarning) {
             Button("清理缓存") {
                 browserController.purgeVolatileCaches()
@@ -164,9 +176,9 @@ struct GameView: View {
             get: { recoveryPausedCount != nil },
             set: { if !$0 { recoveryPausedCount = nil } }
         )) {
-            Button("手动重新加载") {
+            Button("重建浏览器") {
                 recoveryPausedCount = nil
-                browserController.reload()
+                rebuildBrowser()
             }
             Button("退出游戏", role: .destructive) {
                 recoveryPausedCount = nil
@@ -183,6 +195,10 @@ struct GameView: View {
             Button("重新加载") {
                 navigationError = nil
                 browserController.reload()
+            }
+            Button("重建浏览器") {
+                navigationError = nil
+                rebuildBrowser()
             }
             Button("忽略", role: .cancel) { navigationError = nil }
         } message: {
@@ -253,5 +269,12 @@ struct GameView: View {
             recoveryMessage = nil
             recoveryPausedCount = terminationCount
         }
+    }
+
+    private func rebuildBrowser() {
+        browserController.stopLoading()
+        showsMenu = false
+        isGameReady = false
+        browserGeneration += 1
     }
 }

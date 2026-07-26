@@ -1,5 +1,6 @@
 import SwiftUI
 import GameCore
+import WebKit
 
 /// Complete user-facing settings surface. Values are copied into local state so
 /// controls remain responsive, then persisted immediately through SettingsStore.
@@ -45,6 +46,8 @@ struct SettingsView: View {
     @State private var parsedDataHUDEnabled: Bool
 
     @State private var isClearingCache = false
+    @State private var cacheUsageBytes: Int64?
+    @State private var isRefreshingCacheUsage = false
     @State private var confirmation: Confirmation?
     @State private var errorMessage: String?
 
@@ -127,6 +130,9 @@ struct SettingsView: View {
             Button("好", role: .cancel) {}
         } message: {
             Text(errorMessage ?? "")
+        }
+        .task {
+            await refreshMemoryAndCacheUsage()
         }
     }
 
@@ -233,11 +239,11 @@ struct SettingsView: View {
                     }
                 }
             }
-            .disabled(isClearingCache)
+            .disabled(isClearingCache || isRefreshingCacheUsage)
         } header: {
             Text("缓存")
         } footer: {
-            Text("清理 browser_cache 资源文件及 VersionStore 版本记录；登录信息不会受影响。")
+            Text("缓存容量与当前 App 内存集中显示在下方“内存/存储”区。")
         }
         .onChange(of: cacheEnabled) { _, value in update { $0.cacheEnabled = value } }
     }
@@ -279,6 +285,35 @@ struct SettingsView: View {
 
     private var memorySection: some View {
         Section {
+            LabeledContent(
+                "当前 App 内存",
+                value: formattedMemory(diagnostics.currentMemorySample?.residentMB)
+            )
+            LabeledContent(
+                "会话内存峰值",
+                value: formattedMemory(
+                    diagnostics.sessionPeakMemoryMB > 0
+                        ? diagnostics.sessionPeakMemoryMB
+                        : nil
+                )
+            )
+            LabeledContent {
+                HStack(spacing: 8) {
+                    if isRefreshingCacheUsage {
+                        ProgressView()
+                            .controlSize(.small)
+                    }
+                    Text(formattedCacheUsage)
+                }
+            } label: {
+                Text("游戏本地缓存")
+            }
+            Button {
+                Task { await refreshMemoryAndCacheUsage() }
+            } label: {
+                Label("刷新内存与缓存", systemImage: "arrow.clockwise")
+            }
+            .disabled(isRefreshingCacheUsage || isClearingCache)
             Toggle("内存过高时警告", isOn: $memoryWarnEnabled)
             Picker("告警阈值", selection: $memoryWarnThresholdMB) {
                 Text("自动").tag(0)
@@ -288,9 +323,9 @@ struct SettingsView: View {
             }
             .disabled(!memoryWarnEnabled)
         } header: {
-            Text("内存")
+            Text("内存/存储")
         } footer: {
-            Text("阈值仅监测 App 主进程的 phys_footprint。WKWebView 的 WebContent 是独立进程，公开 API 无法读取其内存，只能通过系统内存警告和页面进程终止间接判断。")
+            Text("App 内存为主进程 phys_footprint，不包含独立的 WebContent 进程；iOS 公开 API 无法读取后者。游戏本地缓存只统计 App 自建 browser_cache 磁盘目录（资源文件和 VersionStore），不扫描整个沙盒。WebKit 易失内存缓存由系统管理且无法计量；“清理资源缓存”会一并清除它，但保留 Cookie、WebKit 磁盘登录数据和钥匙串凭证。")
         }
         .onChange(of: memoryWarnEnabled) { _, value in update { $0.memoryWarnEnabled = value } }
         .onChange(of: memoryWarnThresholdMB) { _, value in
@@ -300,18 +335,6 @@ struct SettingsView: View {
 
     private var diagnosticsSection: some View {
         Section("诊断") {
-            LabeledContent(
-                "当前 App phys_footprint",
-                value: formattedMemory(diagnostics.currentMemorySample?.residentMB)
-            )
-            LabeledContent(
-                "会话峰值",
-                value: formattedMemory(
-                    diagnostics.sessionPeakMemoryMB > 0
-                        ? diagnostics.sessionPeakMemoryMB
-                        : nil
-                )
-            )
             LabeledContent("最近内存采样", value: formattedMemorySampleDate)
             LabeledContent(
                 "系统内存警告次数",
@@ -440,6 +463,14 @@ struct SettingsView: View {
         )
     }
 
+    private var formattedCacheUsage: String {
+        guard let cacheUsageBytes else { return "正在计算…" }
+        return ByteCountFormatter.string(
+            fromByteCount: cacheUsageBytes,
+            countStyle: .file
+        )
+    }
+
     private func update(_ mutation: (inout SettingsStore) -> Void) {
         var writableSettings = settings
         mutation(&writableSettings)
@@ -449,15 +480,10 @@ struct SettingsView: View {
         guard !isClearingCache else { return }
         isClearingCache = true
         Task {
+            var cacheClearError: Error?
             do {
                 try await Task.detached(priority: .userInitiated) {
-                    let root = FileManager.default.urls(
-                        for: .cachesDirectory,
-                        in: .userDomainMask
-                    )[0].appendingPathComponent(
-                        BrowserConstants.cacheDirName,
-                        isDirectory: true
-                    )
+                    let root = CacheUsageMonitor.cacheRootURL()
                     try FileManager.default.createDirectory(
                         at: root,
                         withIntermediateDirectories: true
@@ -476,9 +502,43 @@ struct SettingsView: View {
                     URLCache.shared.removeAllCachedResponses()
                 }.value
             } catch {
-                errorMessage = error.localizedDescription
+                cacheClearError = error
+            }
+            // WebKit's volatile memory cache is a separate, non-measurable
+            // store. Clear it even if app-managed disk cleanup partly failed.
+            await clearWebKitMemoryCache()
+            if let cacheClearError {
+                errorMessage = cacheClearError.localizedDescription
             }
             isClearingCache = false
+            await refreshMemoryAndCacheUsage()
+        }
+    }
+
+    private func refreshMemoryAndCacheUsage() async {
+        guard !isRefreshingCacheUsage else { return }
+        isRefreshingCacheUsage = true
+        defer { isRefreshingCacheUsage = false }
+        // Settings can be opened before GameView starts its long-lived
+        // monitor. A one-shot sample guarantees the current footprint is
+        // visible without starting another timer.
+        MemoryMonitor(diagnostics: diagnostics).sample()
+        do {
+            cacheUsageBytes = try await CacheUsageMonitor.usageBytes()
+        } catch {
+            cacheUsageBytes = nil
+            errorMessage = "读取游戏缓存大小失败：\(error.localizedDescription)"
+        }
+    }
+
+    private func clearWebKitMemoryCache() async {
+        await withCheckedContinuation { continuation in
+            WKWebsiteDataStore.default().removeData(
+                ofTypes: Set([WKWebsiteDataTypeMemoryCache]),
+                modifiedSince: .distantPast
+            ) {
+                continuation.resume()
+            }
         }
     }
 
