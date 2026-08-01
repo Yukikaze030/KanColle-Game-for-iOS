@@ -16,6 +16,8 @@ public struct MasterSlotItem: Codable, Sendable, Equatable {
     public let name: String
     public let type: [Int]
     public let antiSubmarine: Int?
+    public let antiAir: Int?
+    public let search: Int?
 
     public var category: Int? { type.count > 2 ? type[2] : nil }
 }
@@ -100,7 +102,9 @@ public struct GameMasterData: Codable, Sendable, Equatable {
             id: id,
             name: object.string("api_name") ?? "",
             type: object.intArray("api_type"),
-            antiSubmarine: object.int("api_tais")
+            antiSubmarine: object.int("api_tais"),
+            antiAir: object.int("api_tyku"),
+            search: object.int("api_saku")
         )
     }
 

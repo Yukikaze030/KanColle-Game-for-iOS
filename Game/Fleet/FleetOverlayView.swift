@@ -173,7 +173,8 @@ struct FleetOverlayView: View {
                 userItems: gameState.fleet.slotItems,
                 repairingShipIDs: Set(
                     gameState.fleet.repairDocks.values.compactMap(\.shipID)
-                )
+                ),
+                headquartersLevel: gameState.fleet.admiral?.level ?? 0
             )
         } else {
             emptyState

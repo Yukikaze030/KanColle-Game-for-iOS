@@ -14,6 +14,9 @@ public struct UserShip: Codable, Sendable, Equatable {
     public let currentHP: Int
     public let maximumHP: Int
     public let condition: Int
+    /// API `api_sakuteki[0]`, including equipment search.
+    /// Optional so snapshots persisted by earlier app versions remain decodable.
+    public let search: Int?
     public let fuel: Int
     public let ammunition: Int
     public let slotItemIDs: [Int]
@@ -28,6 +31,7 @@ public struct UserShip: Codable, Sendable, Equatable {
         currentHP: Int,
         maximumHP: Int,
         condition: Int,
+        search: Int? = nil,
         fuel: Int = 0,
         ammunition: Int = 0,
         slotItemIDs: [Int],
@@ -41,6 +45,7 @@ public struct UserShip: Codable, Sendable, Equatable {
         self.currentHP = currentHP
         self.maximumHP = maximumHP
         self.condition = condition
+        self.search = search
         self.fuel = fuel
         self.ammunition = ammunition
         self.slotItemIDs = slotItemIDs
@@ -200,6 +205,7 @@ public struct FleetSnapshot: Codable, Sendable, Equatable {
             currentHP: currentHP ?? previous.currentHP,
             maximumHP: previous.maximumHP,
             condition: condition ?? previous.condition,
+            search: previous.search,
             fuel: fuel ?? previous.fuel,
             ammunition: ammunition ?? previous.ammunition,
             slotItemIDs: previous.slotItemIDs,
@@ -261,6 +267,7 @@ public struct FleetSnapshot: Codable, Sendable, Equatable {
             currentHP: object.int("api_nowhp") ?? previous?.currentHP ?? 0,
             maximumHP: object.int("api_maxhp") ?? previous?.maximumHP ?? 0,
             condition: object.int("api_cond") ?? previous?.condition ?? 0,
+            search: object["api_sakuteki"]?.arrayValue?.first?.intValue ?? previous?.search,
             fuel: object.int("api_fuel") ?? previous?.fuel ?? 0,
             ammunition: object.int("api_bull") ?? previous?.ammunition ?? 0,
             slotItemIDs: object["api_slot"] == nil ? (previous?.slotItemIDs ?? []) : object.intArray("api_slot").filter { $0 > 0 },
