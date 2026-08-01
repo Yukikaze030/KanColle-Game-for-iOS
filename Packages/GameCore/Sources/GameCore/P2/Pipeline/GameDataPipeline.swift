@@ -99,6 +99,14 @@ public actor GameDataPipeline {
             applyPort(object)
             return commit(.portUpdated, eventID: eventID)
 
+        // These values are refreshed separately by the game after a map is selected,
+        // so only accepting the port payload leaves the native map/air-base tools stale.
+        case "/api_get_member/mapinfo", "/api_get_member/base_air_corps":
+            guard let data = envelope.data,
+                  let object = data.objectValue else { return .ignored(endpoint: envelope.endpoint) }
+            guard applySortieSupport(object) else { return .ignored(endpoint: envelope.endpoint) }
+            return commit(.incrementalUpdated(endpoint: envelope.endpoint, warnings: []), eventID: eventID)
+
         case "/api_get_member/require_info":
             guard let data = envelope.data else { return .ignored(endpoint: envelope.endpoint) }
             guard let object = data.objectValue,
@@ -187,12 +195,22 @@ public actor GameDataPipeline {
         if let decks = object["api_deck_port"]?.arrayValue { fleetState.replaceDecks(from: decks) }
         if let docks = object["api_ndock"]?.arrayValue { fleetState.replaceRepairDocks(from: docks) }
         if let combined = object.int("api_combined_flag") { fleetState.combinedFleetType = combined }
+        _ = applySortieSupport(object)
+    }
+
+    @discardableResult
+    private func applySortieSupport(_ object: [String: JSONValue]) -> Bool {
+        var changed = false
         if let maps = object["api_map_info"]?.arrayValue {
-            mapGauges = maps.compactMap(Self.mapGauge)
+            let next = maps.compactMap(Self.mapGauge)
+            if next != mapGauges { mapGauges = next; changed = true }
         }
-        if let bases = object["api_air_base"]?.arrayValue {
-            landAirBases = bases.compactMap(Self.landAirBase)
+        // `base_air_corps` returns its array under api_air_corps on some game versions.
+        if let bases = object["api_air_base"]?.arrayValue ?? object["api_air_corps"]?.arrayValue {
+            let next = bases.compactMap(Self.landAirBase)
+            if next != landAirBases { landAirBases = next; changed = true }
         }
+        return changed
     }
 
     private static func mapGauge(_ value: JSONValue) -> MapGaugeState? {

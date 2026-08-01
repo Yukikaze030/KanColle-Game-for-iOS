@@ -83,6 +83,7 @@ private struct ExpeditionTableView: View {
     let master: GameMasterData
     let details: [ToolStaticData.Expedition]
     @State private var query = ""
+    @State private var selected: ToolStaticData.Expedition?
 
     private var missions: [MasterMission] {
         master.missions.values.filter {
@@ -92,6 +93,9 @@ private struct ExpeditionTableView: View {
 
     var body: some View {
         List(missions, id: \.id) { mission in
+            Button {
+                selected = details.first(where: { Int($0.no) == mission.id })
+            } label: {
             HStack(spacing: 10) {
                 Image(systemName: activeDeck(for: mission.id) == nil ? "ferry" : "ferry.fill")
                     .foregroundStyle(activeDeck(for: mission.id) == nil ? Color.secondary : Color.cyan)
@@ -112,6 +116,7 @@ private struct ExpeditionTableView: View {
                     }
                 }
             }
+            }.buttonStyle(.plain)
         }
         .listStyle(.plain)
         .searchable(text: $query, prompt: "搜索远征名称或编号")
@@ -124,6 +129,7 @@ private struct ExpeditionTableView: View {
                 )
             }
         }
+        .sheet(item: $selected) { detail in ExpeditionDetailView(detail: detail) }
     }
 
     private func activeDeck(for missionID: Int) -> FleetDeck? {
@@ -140,6 +146,27 @@ private struct ExpeditionTableView: View {
         let condition = [value.totalNum.map { "\($0)舰" }, value.flagLevel.map { "旗舰Lv.\($0)" }]
             .compactMap { $0 }.joined(separator: " · ")
         return "资源 \(resources.isEmpty ? "—" : resources)\(condition.isEmpty ? "" : " · \(condition)")"
+    }
+}
+
+private struct ExpeditionDetailView: View {
+    let detail: ToolStaticData.Expedition
+    var body: some View {
+        NavigationStack {
+            List {
+                Section("成功条件") {
+                    LabeledContent("最低舰船数", value: detail.totalNum.map { "\($0) 艘" } ?? "资料未标注")
+                    LabeledContent("旗舰等级", value: detail.flagLevel.map { "Lv.\($0)" } ?? "资料未标注")
+                    Text("舰种、等级与总等级等详细成功条件会因远征而不同；游戏客户端未提供完整规则，资料源未标注时不会猜测。")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                Section("报酬") {
+                    Text("资源（燃/弹/钢/铝）：\((detail.resource ?? []).prefix(4).map(String.init).joined(separator: " / "))")
+                    Text("提督经验 \(detail.exp?.first ?? 0) · 舰娘经验 \(detail.exp?.dropFirst().first ?? 0)")
+                }
+            }
+            .navigationTitle(detail.displayName).navigationBarTitleDisplayMode(.inline)
+        }
     }
 }
 
@@ -164,10 +191,11 @@ private struct ToolDataStatusView: View {
 }
 
 private struct ShipLibraryView: View {
+    private enum Sort: String, CaseIterable, Identifiable { case level = "等级", acquired = "入手顺序", repair = "维修完成", condition = "士气"; var id: Self { self } }
     let fleet: FleetSnapshot
     let master: GameMasterData
     @State private var query = ""
-    @State private var sortByLevel = true
+    @State private var sort: Sort = .level
     @State private var selected: UserShip?
     @State private var shipTypeID = 0
     @State private var onlyDamaged = false
@@ -179,10 +207,7 @@ private struct ShipLibraryView: View {
                     && (shipTypeID == 0 || master.ships[ship.masterShipID]?.shipTypeID == shipTypeID)
                     && (!onlyDamaged || ship.currentHP < ship.maximumHP)
             }
-            .sorted {
-                if sortByLevel, $0.level != $1.level { return $0.level > $1.level }
-                return $0.id < $1.id
-            }
+            .sorted(by: sortShips)
     }
 
     var body: some View {
@@ -214,7 +239,7 @@ private struct ShipLibraryView: View {
             }.padding(.horizontal)
         }
         .toolbar {
-            Button(sortByLevel ? "等级排序" : "ID 排序") { sortByLevel.toggle() }
+            Picker("排序", selection: $sort) { ForEach(Sort.allCases) { Text($0.rawValue).tag($0) } }
         }
         .overlay {
             if ships.isEmpty { ContentUnavailableView("暂无舰娘", systemImage: "ship") }
@@ -245,6 +270,18 @@ private struct ShipLibraryView: View {
     private var shipTypes: [MasterShipType] {
         let used = Set(fleet.ships.values.compactMap { master.ships[$0.masterShipID]?.shipTypeID })
         return master.shipTypes.values.filter { used.contains($0.id) }.sorted { $0.id < $1.id }
+    }
+
+    private func sortShips(_ lhs: UserShip, _ rhs: UserShip) -> Bool {
+        switch sort {
+        case .level: return lhs.level == rhs.level ? lhs.id < rhs.id : lhs.level > rhs.level
+        case .acquired: return lhs.id < rhs.id
+        case .condition: return lhs.condition == rhs.condition ? lhs.id < rhs.id : lhs.condition < rhs.condition
+        case .repair:
+            let lhsDate = fleet.repairDocks.values.first(where: { $0.shipID == lhs.id })?.completionTime ?? Int64.max
+            let rhsDate = fleet.repairDocks.values.first(where: { $0.shipID == rhs.id })?.completionTime ?? Int64.max
+            return lhsDate == rhsDate ? lhs.id < rhs.id : lhsDate < rhsDate
+        }
     }
 }
 
@@ -325,6 +362,8 @@ private struct EquipmentLibraryView: View {
     var body: some View {
         List(items, id: \.id) { item in
             HStack {
+                Image(systemName: equipmentSymbol(master.slotItems[item.masterSlotItemID]?.category ?? 0))
+                    .frame(width: 22).foregroundStyle(.cyan)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(master.slotItems[item.masterSlotItemID]?.name ?? "装备 #\(item.masterSlotItemID)")
                     Text(equipmentSubtitle(item))
@@ -339,7 +378,7 @@ private struct EquipmentLibraryView: View {
         .safeAreaInset(edge: .top) {
             Picker("装备类型", selection: $category) {
                 Text("全部类型").tag(0)
-                ForEach(categories, id: \.self) { Text("类型 \($0)").tag($0) }
+                ForEach(categories, id: \.self) { Text(equipmentTypeName($0)).tag($0) }
             }.pickerStyle(.menu).padding(.horizontal)
         }
         .overlay {
@@ -354,7 +393,21 @@ private struct EquipmentLibraryView: View {
         let stats = [("火", masterItem?.firepower), ("雷", masterItem?.torpedo), ("爆", masterItem?.bombing), ("空", masterItem?.antiAir), ("潜", masterItem?.antiSubmarine), ("索", masterItem?.search)]
             .compactMap { label, value in value.map { "\(label)+\($0)" } }
             .joined(separator: " ")
-        return "类型 \(masterItem?.category ?? 0) · 改修 +\(item.improvementLevel) · 熟练 \(item.aircraftProficiency)\(stats.isEmpty ? "" : " · \(stats)")"
+        return "\(equipmentTypeName(masterItem?.category ?? 0)) · 改修 +\(item.improvementLevel) · 熟练 \(item.aircraftProficiency)\(stats.isEmpty ? "" : " · \(stats)")"
+    }
+
+    private func equipmentSymbol(_ type: Int) -> String {
+        switch type {
+        case 1...4: "scope"; case 5: "target"; case 6...11, 23, 25, 26, 41...47: "airplane"
+        case 12, 13: "dot.radiowaves.left.and.right"; case 14, 15: "water.waves"; case 16...20, 27...31: "shield"
+        case 21, 22, 32...40: "crosshair"; case 24: "ferry"; case 48...57: "shippingbox"
+        default: "shippingbox"
+        }
+    }
+
+    private func equipmentTypeName(_ type: Int) -> String {
+        let names: [Int: String] = [1:"小口径主炮", 2:"中口径主炮", 3:"大口径主炮", 4:"副炮", 5:"鱼雷", 6:"舰战", 7:"舰爆", 8:"舰攻", 9:"舰侦", 10:"水侦", 11:"水爆", 12:"小型电探", 13:"大型电探", 14:"声呐", 15:"爆雷", 16:"追加装甲", 17:"机关部件", 18:"对空弹", 19:"彻甲弹", 20:"VT信管", 21:"对空机枪", 22:"特殊装备", 23:"陆攻", 24:"上陆艇", 25:"旋翼机", 26:"对潜哨戒机"]
+        return names[type] ?? "装备类型 \(type)"
     }
 }
 
