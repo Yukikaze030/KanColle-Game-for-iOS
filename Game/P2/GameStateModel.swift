@@ -14,6 +14,9 @@ final class GameStateModel {
     private(set) var isStale = false
     private(set) var lastError: String?
     private(set) var battle: BattleSnapshot?
+    /// A battle that was active when the app stopped. It is intentionally kept
+    /// out of `battle` so the live HUD never treats stale HP as current state.
+    private(set) var interruptedBattle: BattleSnapshot?
     private(set) var battleResult: BattleResultMerge?
     private(set) var battleLogs: [BattleLogEntry] = []
     private(set) var quests = QuestListSnapshot()
@@ -44,6 +47,7 @@ final class GameStateModel {
 
     func publishP3(
         battle: BattleSnapshot?,
+        interruptedBattle: BattleSnapshot? = nil,
         battleResult: BattleResultMerge?,
         battleLogs: [BattleLogEntry],
         quests: QuestListSnapshot,
@@ -55,6 +59,7 @@ final class GameStateModel {
         guard battleRevision >= self.battleRevision,
               questRevision >= self.questRevision else { return }
         self.battle = battle
+        self.interruptedBattle = interruptedBattle
         self.battleResult = battleResult
         self.battleLogs = Array(battleLogs.prefix(BattleLogProjector.maximumEntries))
         self.quests = quests
@@ -80,6 +85,7 @@ final class GameStateModel {
         publish(state: state, timers: timers)
         publishP3(
             battle: battle,
+            interruptedBattle: battle == nil ? self.interruptedBattle : nil,
             battleResult: battleResult,
             battleLogs: battleLogs,
             quests: quests,
@@ -94,6 +100,7 @@ final class GameStateModel {
         isStale = false
         lastError = nil
         battle = nil
+        interruptedBattle = nil
         battleResult = nil
         p3RecoveryIssues = []
     }

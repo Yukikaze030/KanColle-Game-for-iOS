@@ -4,6 +4,7 @@ import WebKit
 
 /// Complete user-facing settings surface. Values are copied into local state so
 /// controls remain responsive, then persisted immediately through SettingsStore.
+@MainActor
 struct SettingsView: View {
     private struct SubtitleLanguage: Identifiable {
         let id: String
@@ -20,12 +21,15 @@ struct SettingsView: View {
 
     private let settings: SettingsStore
     private let keychain: KeychainStore
+    private let notificationService: NotificationService
+    private let onNotificationSettingsChanged: () -> Void
     @State private var diagnostics: DiagnosticsStore
 
     @State private var connector: BrowserConstants.Connector
     @State private var silentStart: Bool
     @State private var legacyRenderer: Bool
     @State private var fpsUnlockEnabled: Bool
+    @State private var critDisplayEnabled: Bool
     @State private var cursorMode: SettingsStore.CursorMode
     @State private var keepScreenOn: Bool
     @State private var subtitleEnabled: Bool
@@ -60,15 +64,20 @@ struct SettingsView: View {
     init(
         settings: SettingsStore = SettingsStore(),
         keychain: KeychainStore = KeychainStore(),
-        diagnostics: DiagnosticsStore? = nil
+        diagnostics: DiagnosticsStore? = nil,
+        notificationService: NotificationService,
+        onNotificationSettingsChanged: @escaping () -> Void = {}
     ) {
         self.settings = settings
         self.keychain = keychain
+        self.notificationService = notificationService
+        self.onNotificationSettingsChanged = onNotificationSettingsChanged
         _diagnostics = State(initialValue: diagnostics ?? .shared)
         _connector = State(initialValue: settings.connector)
         _silentStart = State(initialValue: settings.silentStart)
         _legacyRenderer = State(initialValue: settings.legacyRenderer)
         _fpsUnlockEnabled = State(initialValue: settings.fpsUnlockEnabled)
+        _critDisplayEnabled = State(initialValue: settings.critDisplayEnabled)
         _cursorMode = State(initialValue: settings.cursorMode)
         _keepScreenOn = State(initialValue: settings.keepScreenOn)
         _subtitleEnabled = State(initialValue: settings.subtitleEnabled)
@@ -96,7 +105,11 @@ struct SettingsView: View {
             cacheSection
             networkSection
             certificateSection
-            NotificationSettingsSection(settings: settings)
+            NotificationSettingsSection(
+                settings: settings,
+                service: notificationService,
+                onSettingsChanged: onNotificationSettingsChanged
+            )
             battleQuestSection
             memorySection
             diagnosticsSection
@@ -186,6 +199,7 @@ struct SettingsView: View {
                 Text("WebGL").tag(false)
             }
             Toggle("移除 60 帧限制", isOn: $fpsUnlockEnabled)
+            Toggle("显示暴击伤害", isOn: $critDisplayEnabled)
             Picker("指针模式", selection: $cursorMode) {
                 Text("触摸").tag(SettingsStore.CursorMode.touch)
                 Text("鼠标").tag(SettingsStore.CursorMode.mouse)
@@ -200,6 +214,7 @@ struct SettingsView: View {
         .onChange(of: silentStart) { _, value in update { $0.silentStart = value } }
         .onChange(of: legacyRenderer) { _, value in update { $0.legacyRenderer = value } }
         .onChange(of: fpsUnlockEnabled) { _, value in update { $0.fpsUnlockEnabled = value } }
+        .onChange(of: critDisplayEnabled) { _, value in update { $0.critDisplayEnabled = value } }
         .onChange(of: cursorMode) { _, value in update { $0.cursorMode = value } }
         .onChange(of: keepScreenOn) { _, value in update { $0.keepScreenOn = value } }
     }

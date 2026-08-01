@@ -16,17 +16,20 @@ public struct ScriptPatcher: Sendable {
         public var cursorMode: CursorMode
         public var adjustsGameLayout: Bool
         public var unlocksFPS: Bool
+        public var showsCriticalDamage: Bool
 
         public init(
             muteOnStart: Bool = false,
             cursorMode: CursorMode = .mouse,
             adjustsGameLayout: Bool = true,
-            unlocksFPS: Bool = false
+            unlocksFPS: Bool = false,
+            showsCriticalDamage: Bool = false
         ) {
             self.muteOnStart = muteOnStart
             self.cursorMode = cursorMode
             self.adjustsGameLayout = adjustsGameLayout
             self.unlocksFPS = unlocksFPS
+            self.showsCriticalDamage = showsCriticalDamage
         }
     }
 
@@ -45,6 +48,7 @@ public struct ScriptPatcher: Sendable {
     public func patchMainScript(_ script: String, options: Options = .init()) -> String {
         var output = script
         output = patchFPS(in: output, enabled: options.unlocksFPS)
+        output = patchCriticalDamage(in: output, enabled: options.showsCriticalDamage)
         output = patchAudio(in: output, muteOnStart: options.muteOnStart)
 
         if options.cursorMode == .touch {
@@ -66,6 +70,22 @@ public struct ScriptPatcher: Sendable {
         }
 
         return output
+    }
+
+    /// Port of GotoBrowser's CritPatcher. The Android implementation only
+    /// patches when exactly one obfuscated comparison block matches, which is
+    /// important: a changed game script must be returned untouched.
+    private func patchCriticalDamage(in script: String, enabled: Bool) -> String {
+        guard enabled, !script.contains(Self.critMarker) else { return script }
+        let pattern = #"null\),.{0,99}(<|>)\=.{0,99}\?.{0,99}\=(0x)?0\:.{0,99}(<|>)\=.{0,99}\?.{0,99}\=(0x)?2\:.{0,99}(<|>).{0,99}&&(0x)?2\=\=.{0,99}&&\(.{0,99}\=(0x)?1\)"#
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return script }
+        let range = NSRange(script.startIndex..., in: script)
+        guard let match = regex.firstMatch(in: script, range: range),
+              regex.numberOfMatches(in: script, range: range) == 1,
+              let replacementRange = Range(match.range, in: script) else { return script }
+        var patched = script
+        patched.replaceSubrange(replacementRange, with: "null)")
+        return "/*\(Self.critMarker)*/\n" + patched
     }
 
     // MARK: - Frame rate
@@ -248,6 +268,7 @@ public struct ScriptPatcher: Sendable {
     }
 
     private static let fpsMarker = "__GOTO_IOS_FPS_PATCH_V1__"
+    private static let critMarker = "__GOTO_IOS_CRIT_PATCH_V1__"
     private static let audioMarker = "__GOTO_IOS_AUDIO_PATCH_V1__"
     private static let touchMarker = "__GOTO_IOS_TOUCH_PATCH_V1__"
     private static let bridgeMarker = "__GOTO_IOS_BRIDGE_PATCH_V1__"

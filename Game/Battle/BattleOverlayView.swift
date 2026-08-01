@@ -5,6 +5,7 @@ import GameCore
 /// this view never parses API JSON and never creates or reloads a WebView.
 struct BattleOverlayView: View {
     let snapshot: BattleSnapshot?
+    let interruptedSnapshot: BattleSnapshot?
     let logs: [BattleLogEntry]
     let result: BattleResultMerge?
     let shipNames: [Int: String]
@@ -17,12 +18,14 @@ struct BattleOverlayView: View {
 
     init(
         snapshot: BattleSnapshot?,
+        interruptedSnapshot: BattleSnapshot? = nil,
         logs: [BattleLogEntry] = [],
         result: BattleResultMerge? = nil,
         shipNames: [Int: String] = [:],
         onClose: @escaping () -> Void
     ) {
         self.snapshot = snapshot
+        self.interruptedSnapshot = interruptedSnapshot
         self.logs = logs
         self.result = result
         self.shipNames = shipNames
@@ -48,6 +51,9 @@ struct BattleOverlayView: View {
 
                 VStack(spacing: 9) {
                     BattleHeaderView(snapshot: snapshot, result: result, onClose: onClose)
+                    if let result {
+                        BattleResultSummaryView(result: result)
+                    }
                     if isRegularLayout(proxy.size) {
                         regularLayout
                     } else {
@@ -95,6 +101,8 @@ struct BattleOverlayView: View {
                             .background(.white.opacity(0.045), in: RoundedRectangle(cornerRadius: 12))
                         }
                     }
+                } else if let interruptedSnapshot {
+                    interruptedBattleContent(interruptedSnapshot)
                 } else {
                     emptyBattle
                 }
@@ -131,6 +139,8 @@ struct BattleOverlayView: View {
                     }
                     .frame(width: availableWidth / 3)
                 }
+            } else if let interruptedSnapshot {
+                interruptedBattleContent(interruptedSnapshot)
             } else {
                 HStack(spacing: 12) {
                     emptyBattle
@@ -170,6 +180,23 @@ struct BattleOverlayView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
+    private func interruptedBattleContent(_ snapshot: BattleSnapshot) -> some View {
+        ScrollView {
+            VStack(spacing: 8) {
+                Label("上次战斗在应用中断前未完成；以下仅为历史记录，并非当前游戏状态。", systemImage: "exclamationmark.arrow.triangle.2.circlepath")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.orange)
+                    .padding(10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(.orange.opacity(0.13), in: RoundedRectangle(cornerRadius: 12))
+                fleetColumns(snapshot)
+                Text("收到新的战斗 API 后，此记录会自动被新的实时战斗替换。")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
     private func isRegularLayout(_ size: CGSize) -> Bool {
         horizontalSizeClass == .regular && size.width >= 760
     }
@@ -180,5 +207,23 @@ struct BattleOverlayView: View {
 
     private func panelHeight(_ size: CGSize) -> CGFloat {
         size.height * (isRegularLayout(size) ? 0.9 : 0.82)
+    }
+}
+
+private struct BattleResultSummaryView: View {
+    let result: BattleResultMerge
+    var body: some View {
+        HStack(spacing: 12) {
+            if let mvp = result.server.mvp { Label("MVP 第\(mvp)艘", systemImage: "star.fill") }
+            if let base = result.server.baseExperience { Label("基础经验 \(base)", systemImage: "chart.line.uptrend.xyaxis") }
+            if let member = result.server.memberExperience { Label("提督经验 \(member)", systemImage: "person.fill") }
+            if let drop = result.server.drop { Label(drop.shipName ?? drop.itemName ?? "未知掉落", systemImage: "gift.fill") }
+        }
+        .font(.caption.weight(.semibold))
+        .foregroundStyle(.yellow)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .background(.yellow.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
     }
 }

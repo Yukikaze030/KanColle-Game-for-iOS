@@ -60,8 +60,11 @@ struct ParsedDataHUDView: View {
         )
         .gesture(dragGesture)
         .animation(.snappy(duration: 0.2), value: collapsed)
-        .onChange(of: model.battle?.sessionID) { _, sessionID in
-            if sessionID != nil {
+        // Keep the game result unknown while the battle is in progress. The
+        // native panel remains in its current tab/state until the server's
+        // battleresult response arrives.
+        .onChange(of: model.battleResult?.server.rank) { _, rank in
+            if rank != nil {
                 selectedTab = .battle
                 collapsed = false
             }
@@ -185,6 +188,9 @@ struct ParsedDataHUDView: View {
                             .font(.caption2.weight(.semibold))
                             .foregroundStyle(risk.color)
                     }
+                    if let result = model.battleResult {
+                        resultSummary(result)
+                    }
                 }
                 .padding(10)
             } else {
@@ -192,6 +198,23 @@ struct ParsedDataHUDView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
+    }
+
+    private func resultSummary(_ result: BattleResultMerge) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack {
+                if let mvp = result.server.mvp { Text("MVP：第 \(mvp) 艘") }
+                if let experience = result.server.baseExperience { Text("经验 \(experience)") }
+                Spacer()
+            }
+            .font(.caption2.weight(.semibold))
+            if let drop = result.server.drop {
+                Text("掉落：\(drop.shipName ?? drop.itemName ?? "未知")")
+                    .font(.caption2).foregroundStyle(.yellow)
+            }
+        }
+        .padding(6)
+        .background(.yellow.opacity(0.12), in: RoundedRectangle(cornerRadius: 7))
     }
 
     private var questContent: some View {

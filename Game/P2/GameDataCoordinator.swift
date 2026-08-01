@@ -1,4 +1,5 @@
 import Foundation
+import WidgetKit
 import GameCore
 
 actor GameDataCoordinator {
@@ -24,7 +25,7 @@ actor GameDataCoordinator {
     private let p3Store: P3SnapshotStore?
     private let p3DatabaseURL: URL?
     private let notificationService: NotificationService
-    private let notificationSettings: NotificationPlanner.Settings
+    private let settings: SettingsStore
     private let battleLogRetentionCount: Int
     private let exactQuestTrackingEnabled: Bool
     private var generation: UInt64 = 0
@@ -36,18 +37,12 @@ actor GameDataCoordinator {
     ) {
         self.model = model
         self.notificationService = notificationService
+        self.settings = settings
         battleLogRetentionCount = settings.battleLogRetentionCount
         exactQuestTrackingEnabled = settings.exactQuestTrackingEnabled
         let definitions = Self.loadQuestDefinitions()
         questDefinitions = definitions
         questReducer = definitions.map { QuestProgressReducer(definitions: $0.definitions) }
-        notificationSettings = .init(
-            expeditionEnabled: settings.expeditionNotificationsEnabled,
-            dockingEnabled: settings.dockingNotificationsEnabled,
-            moraleEnabled: settings.moraleNotificationsEnabled,
-            akashiEnabled: settings.akashiNotificationsEnabled,
-            leadTime: TimeInterval(settings.notificationLeadTimeSeconds)
-        )
         if let url = try? SharedContainer.snapshotDatabaseURL() {
             store = try? GameSnapshotStore(path: url.path)
         } else {
@@ -91,19 +86,30 @@ actor GameDataCoordinator {
                     restored: true,
                     stale: restored.isStale
                 )
+                await notificationService.reconcile(
+                    timers: timers,
+                    plannerSettings: currentNotificationSettings
+                )
             }
             if let restored = try p3Store?.restore() {
                 guard currentGeneration == generation else { return currentGeneration }
                 questSnapshot = restored.quests
                 questRevision = restored.questRevision
                 battleLogs = restored.battleLogs
-                let restoredBattle = restored.currentBattle?.snapshot
+                let restoredCurrentBattle = restored.currentBattle
+                let restoredBattle = restoredCurrentBattle?.status == .restoredIncomplete
+                    ? nil
+                    : restoredCurrentBattle?.snapshot
+                let interruptedBattle = restoredCurrentBattle?.status == .restoredIncomplete
+                    ? restoredCurrentBattle?.snapshot
+                    : nil
                 battleReducer = BattleSessionReducer(
                     snapshot: restoredBattle,
                     initialRevision: restored.battleRevision
                 )
                 await model.publishP3(
                     battle: restoredBattle,
+                    interruptedBattle: interruptedBattle,
                     battleResult: nil,
                     battleLogs: battleLogs,
                     quests: questSnapshot,
@@ -158,14 +164,6 @@ actor GameDataCoordinator {
             }
 
             let projection = projector.project(Self.timerInput(from: state))
-            if p2Changed {
-                try store?.save(
-                    state: state,
-                    revision: state.revision,
-                    timers: projection.timers
-                )
-            }
-
             let p3Before = (battleReducer.snapshot?.revision ?? 0, questRevision)
             try reduceP3(
                 envelope: envelope,
@@ -177,20 +175,9 @@ actor GameDataCoordinator {
             let battleRevision = battleReducer.snapshot?.revision
                 ?? battleLogs.first.map { _ in p3Before.0 } ?? 0
             let p3Changed = battleRevision != p3Before.0 || questRevision != p3Before.1
-            if p3Changed {
-                try p3Store?.save(
-                    quests: questSnapshot,
-                    questRevision: questRevision,
-                    currentBattle: battleReducer.snapshot,
-                    battleRevision: battleRevision,
-                    battleLogs: battleLogs
-                )
-                let databaseURL = p3DatabaseURL
-                Task { @MainActor in
-                    DiagnosticsStore.shared.updateP3DatabaseSize(at: databaseURL)
-                }
-            }
-
+            // Publish live game data before attempting disk persistence. A full
+            // disk or a damaged SQLite file must not hide valid API data, pause
+            // battle/quest reduction, or suppress timer notifications.
             if p2Changed || p3Changed {
                 await model.publishCombined(
                     state: state,
@@ -207,12 +194,73 @@ actor GameDataCoordinator {
             if p2Changed {
                 await notificationService.reconcile(
                     timers: projection.timers,
-                    plannerSettings: notificationSettings
+                    plannerSettings: currentNotificationSettings
                 )
+            }
+
+            if p2Changed {
+                persistP2(state: state, timers: projection.timers)
+            }
+            if p3Changed {
+                persistP3(battleRevision: battleRevision)
             }
         } catch {
             let safeEndpoint = String(endpoint.prefix(160))
             await model.report("\(safeEndpoint)：\(error.localizedDescription)")
+        }
+    }
+
+    /// Replans pending requests when a notification preference changes, without
+    /// waiting for another game API response.
+    func refreshNotifications() async {
+        let state = await pipeline.state()
+        let projection = projector.project(Self.timerInput(from: state))
+        await notificationService.reconcile(
+            timers: projection.timers,
+            plannerSettings: currentNotificationSettings
+        )
+    }
+
+    private var currentNotificationSettings: NotificationPlanner.Settings {
+        .init(
+            expeditionEnabled: settings.expeditionNotificationsEnabled,
+            dockingEnabled: settings.dockingNotificationsEnabled,
+            moraleEnabled: settings.moraleNotificationsEnabled,
+            akashiEnabled: settings.akashiNotificationsEnabled,
+            leadTime: TimeInterval(settings.notificationLeadTimeSeconds)
+        )
+    }
+
+    /// Persistence is deliberately best-effort: it records diagnostics and
+    /// leaves the in-memory presentation pipeline available for later APIs.
+    private func persistP2(state: GameDataState, timers: [GameTimer]) {
+        do {
+            try store?.save(state: state, revision: state.revision, timers: timers)
+            WidgetCenter.shared.reloadTimelines(ofKind: "GameTimersWidget")
+        } catch {
+            Task { @MainActor in
+                DiagnosticsStore.shared.recordPersistenceFailure(store: "P2", error: error)
+            }
+        }
+    }
+
+    private func persistP3(battleRevision: Int64) {
+        do {
+            try p3Store?.save(
+                quests: questSnapshot,
+                questRevision: questRevision,
+                currentBattle: battleReducer.snapshot,
+                battleRevision: battleRevision,
+                battleLogs: battleLogs
+            )
+            let databaseURL = p3DatabaseURL
+            Task { @MainActor in
+                DiagnosticsStore.shared.updateP3DatabaseSize(at: databaseURL)
+            }
+        } catch {
+            Task { @MainActor in
+                DiagnosticsStore.shared.recordPersistenceFailure(store: "P3", error: error)
+            }
         }
     }
 

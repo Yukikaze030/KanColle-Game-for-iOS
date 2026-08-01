@@ -7,19 +7,80 @@ struct FleetCardView: View {
     let masterData: GameMasterData
     let userItems: [Int: UserSlotItem]
     let repairingShipIDs: Set<Int>
+    let headquartersLevel: Int
+    let warningConfiguration: FleetWarningConfiguration
+    @State private var showsSortieConfirmation = false
 
     init(
         deck: FleetDeck,
         ships: [UserShip],
         masterData: GameMasterData,
         userItems: [Int: UserSlotItem],
-        repairingShipIDs: Set<Int>
+        repairingShipIDs: Set<Int>,
+        headquartersLevel: Int,
+        warningConfiguration: FleetWarningConfiguration = .init()
     ) {
         self.deck = deck
         self.ships = ships
         self.masterData = masterData
         self.userItems = userItems
         self.repairingShipIDs = repairingShipIDs
+        self.headquartersLevel = headquartersLevel
+        self.warningConfiguration = warningConfiguration
+    }
+
+    private var formula33Search: FleetCalculator.Formula33Result {
+        FleetCalculator.formula33(
+            ships: ships.enumerated().map { index, ship in
+                FleetCalculator.Formula33Ship(
+                    position: index + 1,
+                    totalSearch: ship.search ?? 0,
+                    equipment: ship.slotItemIDs.map { itemID in
+                        guard let userItem = userItems[itemID],
+                              let masterItem = masterData.slotItems[userItem.masterSlotItemID],
+                              let category = masterItem.category else { return nil }
+                        return FleetCalculator.Formula33Equipment(
+                            type: category,
+                            search: masterItem.search ?? 0,
+                            improvement: userItem.improvementLevel
+                        )
+                    },
+                    expansionEquipment: ship.extraSlotItemID.flatMap { itemID in
+                        guard let userItem = userItems[itemID],
+                              let masterItem = masterData.slotItems[userItem.masterSlotItemID],
+                              let category = masterItem.category else { return nil }
+                        return FleetCalculator.Formula33Equipment(
+                            type: category,
+                            search: masterItem.search ?? 0,
+                            improvement: userItem.improvementLevel
+                        )
+                    }
+                )
+            },
+            headquartersLevel: headquartersLevel,
+            mode: .coefficient(4)
+        )
+    }
+
+    private var airPower: FleetCalculator.AirPowerRange {
+        FleetCalculator.airPowerRange(
+            slots: ships.enumerated().flatMap { shipIndex, ship in
+                ship.slotItemIDs.enumerated().compactMap { slotIndex, itemID in
+                    guard let userItem = userItems[itemID],
+                          let masterItem = masterData.slotItems[userItem.masterSlotItemID],
+                          let category = masterItem.category else { return nil }
+                    return FleetCalculator.AircraftSlot(
+                        position: shipIndex + 1,
+                        itemID: masterItem.id,
+                        type: category,
+                        antiAir: masterItem.antiAir ?? 0,
+                        aircraftCount: ship.aircraftCounts.indices.contains(slotIndex) ? ship.aircraftCounts[slotIndex] : 0,
+                        improvement: userItem.improvementLevel,
+                        proficiency: userItem.aircraftProficiency
+                    )
+                }
+            }
+        )
     }
 
     private var warnings: FleetWarningResult {
@@ -51,7 +112,8 @@ struct FleetCardView: View {
                     ammunitionMaximum: $0.ammunitionMaximum
                 ))
             }),
-            repairingShipIDs: repairingShipIDs
+            repairingShipIDs: repairingShipIDs,
+            configuration: warningConfiguration
         )
     }
 
@@ -87,6 +149,30 @@ struct FleetCardView: View {
                 )
             }
 
+            if warnings.hasAnyHeavyDamage {
+                Button {
+                    showsSortieConfirmation = true
+                } label: {
+                    Label("出击前大破确认", systemImage: "exclamationmark.shield.fill")
+                        .frame(maxWidth: .infinity, minHeight: 38)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(warnings.hasUnsafeHeavyDamage ? .red : .orange)
+            }
+
+            if !ships.isEmpty {
+                HStack(spacing: 8) {
+                    FleetMetric(label: "索敌(33式·4)", value: String(format: "%.2f", formula33Search.value), icon: "eye.fill")
+                    FleetMetric(
+                        label: "制空",
+                        value: airPower.minimum == airPower.maximum
+                            ? "\(airPower.minimum)"
+                            : "\(airPower.minimum)–\(airPower.maximum)",
+                        icon: "airplane"
+                    )
+                }
+            }
+
             if ships.isEmpty {
                 Text("该舰队尚未编成舰船")
                     .font(.subheadline)
@@ -110,10 +196,47 @@ struct FleetCardView: View {
             RoundedRectangle(cornerRadius: 16)
                 .stroke(.white.opacity(0.16), lineWidth: 1)
         }
+        .alert("确认大破舰队状态", isPresented: $showsSortieConfirmation) {
+            Button("返回检查", role: .cancel) {}
+            Button("我已确认", role: .destructive) {}
+        } message: {
+            Text(sortieConfirmationText)
+        }
     }
 
     private func shipName(_ ship: UserShip) -> String {
         let name = masterData.ships[ship.masterShipID]?.name ?? ""
         return name.isEmpty ? "舰船 #\(ship.masterShipID)" : name
+    }
+
+    private var sortieConfirmationText: String {
+        let unsafeNames = ships.filter { ship in
+            warnings.ships.first(where: { $0.shipID == ship.id })?.heavyDamage == .heavyWithoutDamecon
+        }.map(shipName)
+        if unsafeNames.isEmpty {
+            return "舰队含大破舰船，但已检测到损管。请确认装备、目标海域和进击意图。"
+        }
+        return "\(unsafeNames.joined(separator: "、")) 已大破且未检测到损管。继续出击或进击可能导致沉没。"
+    }
+}
+
+private struct FleetMetric: View {
+    let label: String
+    let value: String
+    let icon: String
+
+    var body: some View {
+        Label {
+            VStack(alignment: .leading, spacing: 1) {
+                Text(label).font(.caption2).foregroundStyle(.secondary)
+                Text(value).font(.subheadline.monospacedDigit().weight(.semibold))
+            }
+        } icon: {
+            Image(systemName: icon).foregroundStyle(.cyan)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 9)
+        .padding(.vertical, 7)
+        .background(.black.opacity(0.18), in: RoundedRectangle(cornerRadius: 9))
     }
 }

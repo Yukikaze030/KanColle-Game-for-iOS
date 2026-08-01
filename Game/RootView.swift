@@ -25,11 +25,13 @@ struct RootView: View {
     private let loginAutomation = LoginAutomation()
     private let screenshotSaver = ScreenshotSaver()
     private let dataCoordinator: GameDataCoordinator
+    private let notificationService: NotificationService
 
     init() {
         let settings = SettingsStore()
         let gameStateModel = GameStateModel()
         let notificationService = NotificationService()
+        self.notificationService = notificationService
         self.settings = settings
         self.dataCoordinator = GameDataCoordinator(
             model: gameStateModel,
@@ -92,6 +94,10 @@ struct RootView: View {
                 CertificateInstallView()
             }
         }
+        .onOpenURL { url in
+            guard url.scheme == "kancollegame", url.host == "fleet" else { return }
+            presentedDestination = .fleet
+        }
         .alert("未启用证书完全信任", isPresented: $showsCertificateFallbackPrompt) {
             Button("安装证书") {
                 showsCertificateInstall = true
@@ -116,16 +122,22 @@ struct RootView: View {
             FleetOverlayView(
                 gameState: gameStateModel.state,
                 timers: gameStateModel.timers,
+                warningConfiguration: FleetWarningConfiguration(
+                    onlyLockedShipsOrEquipment: settings.heavyDamageLockedOnly,
+                    minimumLevel: settings.heavyDamageMinimumLevel
+                ),
                 onClose: { presentedDestination = nil }
             )
         } else if destination == .tools {
             ToolsOverlayView(
                 timers: gameStateModel.timers,
+                gameState: gameStateModel.state,
                 onClose: { presentedDestination = nil }
             )
         } else if destination == .battle {
             BattleOverlayView(
                 snapshot: gameStateModel.battle,
+                interruptedSnapshot: gameStateModel.interruptedBattle,
                 logs: gameStateModel.battleLogs,
                 result: gameStateModel.battleResult,
                 shipNames: Dictionary(
@@ -146,7 +158,13 @@ struct RootView: View {
             NavigationStack {
                 Group {
                     if destination == .settings {
-                    SettingsView(settings: settings)
+                    SettingsView(
+                        settings: settings,
+                        notificationService: notificationService,
+                        onNotificationSettingsChanged: {
+                            Task { await dataCoordinator.refreshNotifications() }
+                        }
+                    )
                     } else {
                         ContentUnavailableView(
                             destination.rawValue,
