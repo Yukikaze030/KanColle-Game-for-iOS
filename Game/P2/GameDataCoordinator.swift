@@ -97,13 +97,20 @@ actor GameDataCoordinator {
                 questSnapshot = restored.quests
                 questRevision = restored.questRevision
                 battleLogs = restored.battleLogs
-                let restoredBattle = restored.currentBattle?.snapshot
+                let restoredCurrentBattle = restored.currentBattle
+                let restoredBattle = restoredCurrentBattle?.status == .restoredIncomplete
+                    ? nil
+                    : restoredCurrentBattle?.snapshot
+                let interruptedBattle = restoredCurrentBattle?.status == .restoredIncomplete
+                    ? restoredCurrentBattle?.snapshot
+                    : nil
                 battleReducer = BattleSessionReducer(
                     snapshot: restoredBattle,
                     initialRevision: restored.battleRevision
                 )
                 await model.publishP3(
                     battle: restoredBattle,
+                    interruptedBattle: interruptedBattle,
                     battleResult: nil,
                     battleLogs: battleLogs,
                     quests: questSnapshot,

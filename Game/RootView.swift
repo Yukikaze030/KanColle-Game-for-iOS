@@ -130,6 +130,7 @@ struct RootView: View {
         } else if destination == .battle {
             BattleOverlayView(
                 snapshot: gameStateModel.battle,
+                interruptedSnapshot: gameStateModel.interruptedBattle,
                 logs: gameStateModel.battleLogs,
                 result: gameStateModel.battleResult,
                 shipNames: Dictionary(
