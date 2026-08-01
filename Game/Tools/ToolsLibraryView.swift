@@ -169,11 +169,15 @@ private struct ShipLibraryView: View {
     @State private var query = ""
     @State private var sortByLevel = true
     @State private var selected: UserShip?
+    @State private var shipTypeID = 0
+    @State private var onlyDamaged = false
 
     private var ships: [UserShip] {
         fleet.ships.values
             .filter { ship in
-                query.isEmpty || (master.ships[ship.masterShipID]?.name ?? "").localizedCaseInsensitiveContains(query)
+                (query.isEmpty || (master.ships[ship.masterShipID]?.name ?? "").localizedCaseInsensitiveContains(query))
+                    && (shipTypeID == 0 || master.ships[ship.masterShipID]?.shipTypeID == shipTypeID)
+                    && (!onlyDamaged || ship.currentHP < ship.maximumHP)
             }
             .sorted {
                 if sortByLevel, $0.level != $1.level { return $0.level > $1.level }
@@ -200,6 +204,15 @@ private struct ShipLibraryView: View {
         }
         .listStyle(.plain)
         .searchable(text: $query, prompt: "搜索舰娘")
+        .safeAreaInset(edge: .top) {
+            HStack {
+                Picker("舰种", selection: $shipTypeID) {
+                    Text("全部舰种").tag(0)
+                    ForEach(shipTypes, id: \.id) { Text($0.name).tag($0.id) }
+                }.pickerStyle(.menu)
+                Toggle("仅受损", isOn: $onlyDamaged).font(.caption)
+            }.padding(.horizontal)
+        }
         .toolbar {
             Button(sortByLevel ? "等级排序" : "ID 排序") { sortByLevel.toggle() }
         }
@@ -227,6 +240,11 @@ private struct ShipLibraryView: View {
     private func hpColor(_ ship: UserShip) -> Color {
         guard ship.maximumHP > 0 else { return .secondary }
         return ship.currentHP * 4 <= ship.maximumHP ? .red : ship.currentHP * 2 <= ship.maximumHP ? .orange : .green
+    }
+
+    private var shipTypes: [MasterShipType] {
+        let used = Set(fleet.ships.values.compactMap { master.ships[$0.masterShipID]?.shipTypeID })
+        return master.shipTypes.values.filter { used.contains($0.id) }.sorted { $0.id < $1.id }
     }
 }
 
