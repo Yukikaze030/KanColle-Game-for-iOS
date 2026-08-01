@@ -12,6 +12,30 @@
 		A10000000000000000000002 /* GameCore in Frameworks */ = {isa = PBXBuildFile; productRef = A10000000000000000000013 /* GameCore */; };
 /* End PBXBuildFile section */
 
+/* Begin PBXContainerItemProxy section */
+		A10000000000000000000010 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = CBA3EEEB3013C6E7002CEBE4 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A10000000000000000000009;
+			remoteInfo = GameTimersWidget;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		A10000000000000000000007 /* Embed App Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				A10000000000000000000001 /* GameTimersWidget.appex in Embed App Extensions */,
+			);
+			name = "Embed App Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
 /* Begin PBXFileReference section */
 		A10000000000000000000003 /* GameTimersWidget.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = GameTimersWidget.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		CBA3EEF33013C6E7002CEBE4 /* Game.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Game.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -21,7 +45,6 @@
 		A10000000000000000000004 /* Exceptions for "GameWidget" folder in "GameTimersWidget" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
-				GameWidget.entitlements,
 				Info.plist,
 			);
 			target = A10000000000000000000009 /* GameTimersWidget */;
@@ -29,7 +52,6 @@
 		DA89BC30F0624FE0BC8C1AE2 /* Exceptions for "Game" folder in "Game" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
-				Game.entitlements,
 				Info.plist,
 			);
 			target = CBA3EEF23013C6E7002CEBE4 /* Game */;
@@ -94,30 +116,6 @@
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
-
-/* Begin PBXContainerItemProxy section */
-		A10000000000000000000010 /* PBXContainerItemProxy */ = {
-			isa = PBXContainerItemProxy;
-			containerPortal = CBA3EEEB3013C6E7002CEBE4 /* Project object */;
-			proxyType = 1;
-			remoteGlobalIDString = A10000000000000000000009;
-			remoteInfo = GameTimersWidget;
-		};
-/* End PBXContainerItemProxy section */
-
-/* Begin PBXCopyFilesBuildPhase section */
-		A10000000000000000000007 /* Embed App Extensions */ = {
-			isa = PBXCopyFilesBuildPhase;
-			buildActionMask = 2147483647;
-			dstPath = "";
-			dstSubfolderSpec = 13;
-			files = (
-				A10000000000000000000001 /* GameTimersWidget.appex in Embed App Extensions */,
-			);
-			name = "Embed App Extensions";
-			runOnlyForDeploymentPostprocessing = 0;
-		};
-/* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXNativeTarget section */
 		A10000000000000000000009 /* GameTimersWidget */ = {

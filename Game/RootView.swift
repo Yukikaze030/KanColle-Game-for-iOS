@@ -131,6 +131,7 @@ struct RootView: View {
         } else if destination == .tools {
             ToolsOverlayView(
                 timers: gameStateModel.timers,
+                gameState: gameStateModel.state,
                 onClose: { presentedDestination = nil }
             )
         } else if destination == .battle {

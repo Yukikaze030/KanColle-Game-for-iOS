@@ -3,6 +3,7 @@ import GameCore
 
 struct ToolsOverlayView: View {
     let timers: [GameTimer]
+    let gameState: GameDataState
     let onClose: () -> Void
 
     var body: some View {
@@ -19,8 +20,7 @@ struct ToolsOverlayView: View {
                     }
                     .buttonStyle(.borderedProminent)
                 }
-                TimerOverlayView(timers: timers)
-                Spacer(minLength: 0)
+                ToolsLibraryView(gameState: gameState, timers: timers)
             }
             .padding(14)
         }
