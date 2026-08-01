@@ -20,6 +20,8 @@ import GameCore
     private(set) var p3WarningCount = 0
     private(set) var rankMismatchCount = 0
     private(set) var p3DatabaseSizeBytes: Int64 = 0
+    private(set) var persistenceFailureCount = 0
+    private(set) var latestPersistenceFailure: String?
 
     private(set) var memorySamples: [MemorySample] = []
     private(set) var sessionPeakMemoryMB: Double = 0
@@ -85,6 +87,13 @@ import GameCore
         p3WarningCount += max(0, count)
     }
 
+    /// Keeps persistence faults distinct from API parsing/network faults.
+    /// Error text is bounded because it is shown in the diagnostic UI.
+    func recordPersistenceFailure(store: String, error: Error) {
+        persistenceFailureCount += 1
+        latestPersistenceFailure = "\(Self.sanitize(store, limit: 16)): \(Self.sanitize(error.localizedDescription, limit: 192))"
+    }
+
     func recordRankMismatch() {
         rankMismatchCount += 1
     }
@@ -108,7 +117,9 @@ import GameCore
             "quest_revision=\(questRevision)",
             "warnings=\(p3WarningCount)",
             "rank_mismatches=\(rankMismatchCount)",
-            "database_bytes=\(p3DatabaseSizeBytes)"
+            "database_bytes=\(p3DatabaseSizeBytes)",
+            "persistence_failures=\(persistenceFailureCount)",
+            "latest_persistence_failure=\(latestPersistenceFailure ?? "—")"
         ].joined(separator: "\n")
     }
 
