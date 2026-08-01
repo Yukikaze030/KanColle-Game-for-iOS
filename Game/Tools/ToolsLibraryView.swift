@@ -175,6 +175,7 @@ private struct ShipLibraryView: View {
                     ship: selected,
                     name: master.ships[selected.masterShipID]?.name ?? "舰船 #\(selected.masterShipID)",
                     shipType: master.shipTypes[master.ships[selected.masterShipID]?.shipTypeID ?? 0]?.name,
+                    masterShip: master.ships[selected.masterShipID],
                     items: selected.slotItemIDs.compactMap { fleet.slotItems[$0] },
                     masterItems: master.slotItems
                 )
@@ -193,6 +194,7 @@ private struct ShipDetailView: View {
     let ship: UserShip
     let name: String
     let shipType: String?
+    let masterShip: MasterShip?
     let items: [UserSlotItem]
     let masterItems: [Int: MasterSlotItem]
     var body: some View {
@@ -204,15 +206,47 @@ private struct ShipDetailView: View {
             LabeledContent("士气", value: "\(ship.condition)")
             LabeledContent("燃料", value: "\(ship.fuel)")
             LabeledContent("弹药", value: "\(ship.ammunition)")
+            if let masterShip {
+                Divider()
+                Text("基础属性").font(.headline)
+                statRows(masterShip)
+            }
             Divider()
             Text("装备").font(.headline)
             if items.isEmpty { Text("未装备").foregroundStyle(.secondary) }
             ForEach(items, id: \.id) { item in
-                HStack { Text(masterItems[item.masterSlotItemID]?.name ?? "装备 #\(item.masterSlotItemID)"); Spacer(); Text("+\(item.improvementLevel)").monospacedDigit().foregroundStyle(.secondary) }
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack { Text(masterItems[item.masterSlotItemID]?.name ?? "装备 #\(item.masterSlotItemID)"); Spacer(); Text("+\(item.improvementLevel)").monospacedDigit().foregroundStyle(.secondary) }
+                    if let item = masterItems[item.masterSlotItemID] {
+                        Text(equipmentStatText(item)).font(.caption).foregroundStyle(.secondary)
+                    }
+                }
             }
             Spacer()
         }
         .padding()
+    }
+
+    @ViewBuilder private func statRows(_ ship: MasterShip) -> some View {
+        let values: [(String, [Int]?)] = [
+            ("火力", ship.firepower), ("雷装", ship.torpedo), ("对空", ship.antiAir),
+            ("装甲", ship.armor), ("对潜", ship.antiSubmarine), ("索敌", ship.search), ("运", ship.luck)
+        ]
+        ForEach(values.filter { !($0.1 ?? []).isEmpty }, id: \.0) { title, value in
+            LabeledContent(title, value: rangeText(value ?? []))
+        }
+    }
+
+    private func rangeText(_ value: [Int]) -> String {
+        value.count > 1 ? "\(value[0]) → \(value[1])" : "\(value.first ?? 0)"
+    }
+
+    private func equipmentStatText(_ item: MasterSlotItem) -> String {
+        let values = [
+            ("火", item.firepower), ("雷", item.torpedo), ("爆", item.bombing), ("空", item.antiAir),
+            ("潜", item.antiSubmarine), ("索", item.search), ("命", item.accuracy), ("回", item.evasion)
+        ].compactMap { label, value in value.map { "\(label)+\($0)" } }
+        return values.isEmpty ? "无战斗属性数据" : values.joined(separator: " · ")
     }
 }
 
@@ -235,7 +269,7 @@ private struct EquipmentLibraryView: View {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(master.slotItems[item.masterSlotItemID]?.name ?? "装备 #\(item.masterSlotItemID)")
-                    Text("类型 \(master.slotItems[item.masterSlotItemID]?.category ?? 0) · 改修 +\(item.improvementLevel) · 熟练 \(item.aircraftProficiency)")
+                    Text(equipmentSubtitle(item))
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer()
@@ -256,4 +290,12 @@ private struct EquipmentLibraryView: View {
     }
 
     private var categories: [Int] { Array(Set(fleet.slotItems.values.compactMap { master.slotItems[$0.masterSlotItemID]?.category })).sorted() }
+
+    private func equipmentSubtitle(_ item: UserSlotItem) -> String {
+        let masterItem = master.slotItems[item.masterSlotItemID]
+        let stats = [("火", masterItem?.firepower), ("雷", masterItem?.torpedo), ("爆", masterItem?.bombing), ("空", masterItem?.antiAir), ("潜", masterItem?.antiSubmarine), ("索", masterItem?.search)]
+            .compactMap { label, value in value.map { "\(label)+\($0)" } }
+            .joined(separator: " ")
+        return "类型 \(masterItem?.category ?? 0) · 改修 +\(item.improvementLevel) · 熟练 \(item.aircraftProficiency)\(stats.isEmpty ? "" : " · \(stats)")"
+    }
 }

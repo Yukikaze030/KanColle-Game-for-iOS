@@ -9,6 +9,14 @@ public struct MasterShip: Codable, Sendable, Equatable {
     public let slotCount: Int?
     public let fuelMaximum: Int?
     public let ammunitionMaximum: Int?
+    public let firepower: [Int]?
+    public let torpedo: [Int]?
+    public let antiAir: [Int]?
+    public let armor: [Int]?
+    public let antiSubmarine: [Int]?
+    public let search: [Int]?
+    public let luck: [Int]?
+    public let maximumAircraft: [Int]?
 }
 
 public struct MasterSlotItem: Codable, Sendable, Equatable {
@@ -18,6 +26,13 @@ public struct MasterSlotItem: Codable, Sendable, Equatable {
     public let antiSubmarine: Int?
     public let antiAir: Int?
     public let search: Int?
+    public let firepower: Int?
+    public let torpedo: Int?
+    public let bombing: Int?
+    public let accuracy: Int?
+    public let evasion: Int?
+    public let interception: Int?
+    public let antiBomber: Int?
 
     public var category: Int? { type.count > 2 ? type[2] : nil }
 }
@@ -103,7 +118,15 @@ public struct GameMasterData: Codable, Sendable, Equatable {
             speed: object.int("api_soku"),
             slotCount: object.int("api_slot_num"),
             fuelMaximum: object.int("api_fuel_max"),
-            ammunitionMaximum: object.int("api_bull_max")
+            ammunitionMaximum: object.int("api_bull_max"),
+            firepower: object.intArray("api_houg"),
+            torpedo: object.intArray("api_raig"),
+            antiAir: object.intArray("api_tyku"),
+            armor: object.intArray("api_souk"),
+            antiSubmarine: object.intArray("api_tais"),
+            search: object.intArray("api_saku"),
+            luck: object.intArray("api_luck"),
+            maximumAircraft: object.intArray("api_maxeq")
         )
     }
 
@@ -116,7 +139,14 @@ public struct GameMasterData: Codable, Sendable, Equatable {
             type: object.intArray("api_type"),
             antiSubmarine: object.int("api_tais"),
             antiAir: object.int("api_tyku"),
-            search: object.int("api_saku")
+            search: object.int("api_saku"),
+            firepower: object.int("api_houg"),
+            torpedo: object.int("api_raig"),
+            bombing: object.int("api_baku"),
+            accuracy: object.int("api_houm"),
+            evasion: object.int("api_houk"),
+            interception: object.int("api_raim"),
+            antiBomber: object.int("api_bakk")
         )
     }
 
