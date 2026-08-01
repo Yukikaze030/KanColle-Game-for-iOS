@@ -51,6 +51,9 @@ struct BattleOverlayView: View {
 
                 VStack(spacing: 9) {
                     BattleHeaderView(snapshot: snapshot, result: result, onClose: onClose)
+                    if let result {
+                        BattleResultSummaryView(result: result)
+                    }
                     if isRegularLayout(proxy.size) {
                         regularLayout
                     } else {
@@ -204,5 +207,23 @@ struct BattleOverlayView: View {
 
     private func panelHeight(_ size: CGSize) -> CGFloat {
         size.height * (isRegularLayout(size) ? 0.9 : 0.82)
+    }
+}
+
+private struct BattleResultSummaryView: View {
+    let result: BattleResultMerge
+    var body: some View {
+        HStack(spacing: 12) {
+            if let mvp = result.server.mvp { Label("MVP 第\(mvp)艘", systemImage: "star.fill") }
+            if let base = result.server.baseExperience { Label("基础经验 \(base)", systemImage: "chart.line.uptrend.xyaxis") }
+            if let member = result.server.memberExperience { Label("提督经验 \(member)", systemImage: "person.fill") }
+            if let drop = result.server.drop { Label(drop.shipName ?? drop.itemName ?? "未知掉落", systemImage: "gift.fill") }
+        }
+        .font(.caption.weight(.semibold))
+        .foregroundStyle(.yellow)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .background(.yellow.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
     }
 }
