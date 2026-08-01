@@ -4,6 +4,7 @@ import WebKit
 
 /// Complete user-facing settings surface. Values are copied into local state so
 /// controls remain responsive, then persisted immediately through SettingsStore.
+@MainActor
 struct SettingsView: View {
     private struct SubtitleLanguage: Identifiable {
         let id: String
@@ -20,6 +21,8 @@ struct SettingsView: View {
 
     private let settings: SettingsStore
     private let keychain: KeychainStore
+    private let notificationService: NotificationService
+    private let onNotificationSettingsChanged: () -> Void
     @State private var diagnostics: DiagnosticsStore
 
     @State private var connector: BrowserConstants.Connector
@@ -60,10 +63,14 @@ struct SettingsView: View {
     init(
         settings: SettingsStore = SettingsStore(),
         keychain: KeychainStore = KeychainStore(),
-        diagnostics: DiagnosticsStore? = nil
+        diagnostics: DiagnosticsStore? = nil,
+        notificationService: NotificationService,
+        onNotificationSettingsChanged: @escaping () -> Void = {}
     ) {
         self.settings = settings
         self.keychain = keychain
+        self.notificationService = notificationService
+        self.onNotificationSettingsChanged = onNotificationSettingsChanged
         _diagnostics = State(initialValue: diagnostics ?? .shared)
         _connector = State(initialValue: settings.connector)
         _silentStart = State(initialValue: settings.silentStart)
@@ -96,7 +103,11 @@ struct SettingsView: View {
             cacheSection
             networkSection
             certificateSection
-            NotificationSettingsSection(settings: settings)
+            NotificationSettingsSection(
+                settings: settings,
+                service: notificationService,
+                onSettingsChanged: onNotificationSettingsChanged
+            )
             battleQuestSection
             memorySection
             diagnosticsSection

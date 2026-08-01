@@ -8,6 +8,7 @@ struct FleetTimerWidget: Widget {
     var body: some WidgetConfiguration {
         StaticConfiguration(kind: Self.kind, provider: FleetTimerProvider()) { entry in
             FleetTimerWidgetView(entry: entry)
+                .widgetURL(URL(string: "kancollegame://fleet"))
                 .containerBackground(for: .widget) {
                     LinearGradient(
                         colors: [Color(red: 0.06, green: 0.12, blue: 0.20), Color(red: 0.10, green: 0.24, blue: 0.32)],

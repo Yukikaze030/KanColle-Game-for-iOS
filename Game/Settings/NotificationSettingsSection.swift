@@ -1,17 +1,25 @@
 import SwiftUI
 import GameCore
 
+@MainActor
 struct NotificationSettingsSection: View {
     let settings: SettingsStore
-    @State private var service = NotificationService()
+    let service: NotificationService
+    let onSettingsChanged: () -> Void
     @State private var expeditionEnabled: Bool
     @State private var dockingEnabled: Bool
     @State private var moraleEnabled: Bool
     @State private var akashiEnabled: Bool
     @State private var leadTime: Int
 
-    init(settings: SettingsStore) {
+    init(
+        settings: SettingsStore,
+        service: NotificationService,
+        onSettingsChanged: @escaping () -> Void = {}
+    ) {
         self.settings = settings
+        self.service = service
+        self.onSettingsChanged = onSettingsChanged
         _expeditionEnabled = State(initialValue: settings.expeditionNotificationsEnabled)
         _dockingEnabled = State(initialValue: settings.dockingNotificationsEnabled)
         _moraleEnabled = State(initialValue: settings.moraleNotificationsEnabled)
@@ -60,5 +68,6 @@ struct NotificationSettingsSection: View {
     private func update(_ mutation: (inout SettingsStore) -> Void) {
         var store = settings
         mutation(&store)
+        onSettingsChanged()
     }
 }
