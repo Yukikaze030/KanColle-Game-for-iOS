@@ -14,6 +14,16 @@ public struct GameDataState: Codable, Sendable, Equatable {
         self.landAirBases = landAirBases
         self.revision = revision
     }
+
+    private enum CodingKeys: String, CodingKey { case master, fleet, mapGauges, landAirBases, revision }
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        master = try values.decode(GameMasterData.self, forKey: .master)
+        fleet = try values.decode(FleetSnapshot.self, forKey: .fleet)
+        mapGauges = try values.decodeIfPresent([MapGaugeState].self, forKey: .mapGauges) ?? []
+        landAirBases = try values.decodeIfPresent([LandAirBaseState].self, forKey: .landAirBases) ?? []
+        revision = try values.decodeIfPresent(Int64.self, forKey: .revision) ?? 0
+    }
 }
 
 public enum GameDataPipelineEvent: Sendable, Equatable {
