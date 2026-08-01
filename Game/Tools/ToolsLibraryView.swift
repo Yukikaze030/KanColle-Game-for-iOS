@@ -35,7 +35,7 @@ struct ToolsLibraryView: View {
             case .equipment:
                 EquipmentLibraryView(fleet: gameState.fleet, master: gameState.master)
             case .expeditions:
-                ExpeditionTableView(fleet: gameState.fleet, master: gameState.master, details: staticData.expeditions)
+                ExpeditionTableView(fleet: gameState.fleet, master: gameState.master, details: staticData.expeditions, requirements: staticData.expeditionRequirements)
             case .improvement:
                 AkashiImprovementView(fleet: gameState.fleet, master: gameState.master, entries: staticData.akashi)
             case .experience:
@@ -82,6 +82,7 @@ private struct ExpeditionTableView: View {
     let fleet: FleetSnapshot
     let master: GameMasterData
     let details: [ToolStaticData.Expedition]
+    let requirements: [Int: [String]]
     @State private var query = ""
     @State private var selected: ToolStaticData.Expedition?
 
@@ -129,7 +130,9 @@ private struct ExpeditionTableView: View {
                 )
             }
         }
-        .sheet(item: $selected) { detail in ExpeditionDetailView(detail: detail) }
+        .sheet(item: $selected) { detail in
+            ExpeditionDetailView(detail: detail, requirements: Int(detail.no).flatMap { requirements[$0] } ?? [])
+        }
     }
 
     private func activeDeck(for missionID: Int) -> FleetDeck? {
@@ -151,14 +154,19 @@ private struct ExpeditionTableView: View {
 
 private struct ExpeditionDetailView: View {
     let detail: ToolStaticData.Expedition
+    let requirements: [String]
     var body: some View {
         NavigationStack {
             List {
                 Section("成功条件") {
                     LabeledContent("最低舰船数", value: detail.totalNum.map { "\($0) 艘" } ?? "资料未标注")
                     LabeledContent("旗舰等级", value: detail.flagLevel.map { "Lv.\($0)" } ?? "资料未标注")
-                    Text("舰种、等级与总等级等详细成功条件会因远征而不同；游戏客户端未提供完整规则，资料源未标注时不会猜测。")
-                        .font(.caption).foregroundStyle(.secondary)
+                    if requirements.isEmpty {
+                        Text("更新工具资料后将显示 poi-plugin-ezexped 的舰种、等级、属性与士气条件。")
+                            .font(.caption).foregroundStyle(.secondary)
+                    } else {
+                        ForEach(requirements, id: \.self) { Label($0, systemImage: "checklist") }
+                    }
                 }
                 Section("报酬") {
                     Text("资源（燃/弹/钢/铝）：\((detail.resource ?? []).prefix(4).map(String.init).joined(separator: " / "))")

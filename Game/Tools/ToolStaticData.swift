@@ -37,6 +37,8 @@ final class ToolStaticData: ObservableObject {
 
     @Published private(set) var levelTable: [Int: (next: Int, total: Int)] = [:]
     @Published private(set) var expeditions: [Expedition] = []
+    /// Requirement summaries derived from poi-plugin-ezexped's public checker rules.
+    @Published private(set) var expeditionRequirements: [Int: [String]] = [:]
     @Published private(set) var akashi: [Int: AkashiEntry] = [:]
     @Published private(set) var lastUpdated: Date?
     @Published private(set) var errorMessage: String?
@@ -45,6 +47,7 @@ final class ToolStaticData: ObservableObject {
     private let session: URLSession
     private let directory: URL
     private let sourceBase = URL(string: "https://raw.githubusercontent.com/antest1/kcanotify/master/app/src/main/assets/")!
+    private let ezExpedBase = URL(string: "https://raw.githubusercontent.com/poooi/poi-plugin-ezexped/refs/heads/master/exped-reqs/")!
 
     init(session: URLSession = .shared, directory: URL? = nil) {
         self.session = session
@@ -66,6 +69,15 @@ final class ToolStaticData: ObservableObject {
                 }
                 try data.write(to: directory.appendingPathComponent(name), options: .atomic)
             }
+            // The poi source is JavaScript, not executable content: it is treated strictly
+            // as text and reduced to display-only requirement summaries below.
+            for name in ["world-1.es", "world-2.es", "world-3.es", "world-4.es", "world-5.es", "world-7.es"] {
+                let (data, response) = try await session.data(from: ezExpedBase.appendingPathComponent(name))
+                guard let response = response as? HTTPURLResponse, 200..<300 ~= response.statusCode else {
+                    throw URLError(.badServerResponse)
+                }
+                try data.write(to: directory.appendingPathComponent("ezexped-\(name)"), options: .atomic)
+            }
             loadCached()
             lastUpdated = Date()
         } catch {
@@ -79,6 +91,7 @@ final class ToolStaticData: ObservableObject {
         levelTable = Self.decodeLevelTable(data(named: "exp_ship.json"))
         expeditions = Self.decodeExpeditions(data(named: "expedition.json"))
         akashi = Self.decodeAkashi(data(named: "akashi_data.json"))
+        expeditionRequirements = Self.decodeExpeditionRequirements(directory: directory)
         if lastUpdated == nil {
             lastUpdated = try? directory.appendingPathComponent("akashi_data.json")
                 .resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
@@ -120,5 +133,54 @@ final class ToolStaticData: ObservableObject {
             }
             return (id, AkashiEntry(id: id, improvements: improvements, defaultEquippedOn: equipped))
         })
+    }
+
+    private static func decodeExpeditionRequirements(directory: URL) -> [Int: [String]] {
+        let names = ["world-1.es", "world-2.es", "world-3.es", "world-4.es", "world-5.es", "world-7.es"]
+        return names.reduce(into: [:]) { result, name in
+            guard let text = try? String(contentsOf: directory.appendingPathComponent("ezexped-\(name)"), encoding: .utf8) else { return }
+            for (id, block) in expeditionBlocks(in: text) { result[id] = requirementLabels(in: block) }
+        }
+    }
+
+    private static func expeditionBlocks(in text: String) -> [(Int, String)] {
+        let pattern = #"defineExped\s*(?:/\*[^*]*\*/\s*)?\(\s*(\d+)\s*\)"#
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return [] }
+        let full = NSRange(text.startIndex..., in: text)
+        let matches = regex.matches(in: text, range: full)
+        return matches.enumerated().compactMap { index, match in
+            guard let range = Range(match.range(at: 1), in: text), let id = Int(text[range]) else { return nil }
+            let start = match.range.location
+            let end = index + 1 < matches.count ? matches[index + 1].range.location : (text as NSString).length
+            let block = (text as NSString).substring(with: NSRange(location: start, length: end - start))
+            return (id, block)
+        }
+    }
+
+    private static func requirementLabels(in block: String) -> [String] {
+        var values: [String] = []
+        func captures(_ pattern: String) -> [[String]] {
+            guard let regex = try? NSRegularExpression(pattern: pattern) else { return [] }
+            return regex.matches(in: block, range: NSRange(block.startIndex..., in: block)).map { match in
+                (1..<match.numberOfRanges).compactMap { Range(match.range(at: $0), in: block).map { String(block[$0]) } }
+            }
+        }
+        for item in captures(#"fslSc\(\s*(\d+)\s*,\s*(\d+)\s*\)"#) { values += ["旗舰等级 ≥ \(item[0])", "舰船数 ≥ \(item[1])"] }
+        let numeric = [("LevelSum", "舰队总等级"), ("TotalFirepower", "总火力"), ("TotalAntiAir", "总对空"), ("TotalAsw", "总对潜"), ("TotalLos", "总索敌"), ("Morale", "士气")]
+        for (key, label) in numeric {
+            for item in captures("mk\\.\(key)\\(\\s*(\\d+)\\s*\\)") { values.append("\(label) ≥ \(item[0])") }
+        }
+        for item in captures(#"\{\s*([^{}]+)\s*\}"#) where item[0].contains(":") {
+            let ships = item[0].split(separator: ",").map { component -> String in
+                let pair = component.split(separator: ":", maxSplits: 1).map { $0.trimmingCharacters(in: .whitespaces) }
+                return pair.count == 2 ? "\(shipTypeName(pair[0])) × \(pair[1])" : String(component)
+            }.joined(separator: "，")
+            values.append("编成：\(ships)")
+        }
+        return Array(NSOrderedSet(array: values)) as? [String] ?? values
+    }
+
+    private static func shipTypeName(_ value: String) -> String {
+        ["CL": "轻巡", "DD": "驱逐", "DE": "海防", "DDorDE": "驱逐或海防", "CT": "练巡", "CVE": "护卫空母", "CA": "重巡", "CAV": "航巡", "CV": "正规空母", "CVL": "轻空母", "BB": "战舰", "BBV": "航战", "SS": "潜艇", "SSV": "潜母", "AV": "水母", "AO": "补给舰", "AS": "潜母", "LHA": "两栖攻击舰"][value] ?? value
     }
 }
