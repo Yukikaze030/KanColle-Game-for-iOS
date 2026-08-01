@@ -22,6 +22,8 @@ struct GameView: View {
     @State private var showsMemoryWarning = false
     @State private var recoveryRequired: RecoveryRequired?
     @State private var navigationError: String?
+    @State private var sortieRiskAlert: String?
+    @State private var warnedBattleSessionID: UUID?
     @State private var browserGeneration = 0
     @State private var memoryMonitor: MemoryMonitor
 
@@ -143,6 +145,27 @@ struct GameView: View {
             if phase == .background {
                 browserController.purgeVolatileCaches()
             }
+        }
+        .onChange(of: gameStateModel.battle?.revision) { _, _ in
+            guard let battle = gameStateModel.battle,
+                  battle.sessionID != warnedBattleSessionID,
+                  battle.status == .active else { return }
+            let assessments = DameconResolver.assessments(in: battle).values
+            if assessments.contains(.sunk) {
+                warnedBattleSessionID = battle.sessionID
+                sortieRiskAlert = "检测到沉没状态。请不要在游戏中继续进击，并核对战斗数据。"
+            } else if assessments.contains(.heavyDamaged) {
+                warnedBattleSessionID = battle.sessionID
+                sortieRiskAlert = "舰队出现大破且未检测到损管。请在游戏的进击/撤退选择中优先撤退。"
+            }
+        }
+        .alert("大破进击警告", isPresented: Binding(
+            get: { sortieRiskAlert != nil },
+            set: { if !$0 { sortieRiskAlert = nil } }
+        )) {
+            Button("我已了解", role: .cancel) { sortieRiskAlert = nil }
+        } message: {
+            Text(sortieRiskAlert ?? "")
         }
         .alert("内存占用过高", isPresented: $showsMemoryWarning) {
             Button("清理缓存") {
