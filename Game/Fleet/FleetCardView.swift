@@ -9,6 +9,7 @@ struct FleetCardView: View {
     let repairingShipIDs: Set<Int>
     let headquartersLevel: Int
     let warningConfiguration: FleetWarningConfiguration
+    @State private var showsSortieConfirmation = false
 
     init(
         deck: FleetDeck,
@@ -148,6 +149,17 @@ struct FleetCardView: View {
                 )
             }
 
+            if warnings.hasAnyHeavyDamage {
+                Button {
+                    showsSortieConfirmation = true
+                } label: {
+                    Label("出击前大破确认", systemImage: "exclamationmark.shield.fill")
+                        .frame(maxWidth: .infinity, minHeight: 38)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(warnings.hasUnsafeHeavyDamage ? .red : .orange)
+            }
+
             if !ships.isEmpty {
                 HStack(spacing: 8) {
                     FleetMetric(label: "索敌(33式·4)", value: String(format: "%.2f", formula33Search.value), icon: "eye.fill")
@@ -184,11 +196,27 @@ struct FleetCardView: View {
             RoundedRectangle(cornerRadius: 16)
                 .stroke(.white.opacity(0.16), lineWidth: 1)
         }
+        .alert("确认大破舰队状态", isPresented: $showsSortieConfirmation) {
+            Button("返回检查", role: .cancel) {}
+            Button("我已确认", role: .destructive) {}
+        } message: {
+            Text(sortieConfirmationText)
+        }
     }
 
     private func shipName(_ ship: UserShip) -> String {
         let name = masterData.ships[ship.masterShipID]?.name ?? ""
         return name.isEmpty ? "舰船 #\(ship.masterShipID)" : name
+    }
+
+    private var sortieConfirmationText: String {
+        let unsafeNames = ships.filter { ship in
+            warnings.ships.first(where: { $0.shipID == ship.id })?.heavyDamage == .heavyWithoutDamecon
+        }.map(shipName)
+        if unsafeNames.isEmpty {
+            return "舰队含大破舰船，但已检测到损管。请确认装备、目标海域和进击意图。"
+        }
+        return "\(unsafeNames.joined(separator: "、")) 已大破且未检测到损管。继续出击或进击可能导致沉没。"
     }
 }
 
