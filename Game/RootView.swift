@@ -116,6 +116,10 @@ struct RootView: View {
             FleetOverlayView(
                 gameState: gameStateModel.state,
                 timers: gameStateModel.timers,
+                warningConfiguration: FleetWarningConfiguration(
+                    onlyLockedShipsOrEquipment: settings.heavyDamageLockedOnly,
+                    minimumLevel: settings.heavyDamageMinimumLevel
+                ),
                 onClose: { presentedDestination = nil }
             )
         } else if destination == .tools {

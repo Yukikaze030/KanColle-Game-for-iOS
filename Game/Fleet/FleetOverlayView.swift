@@ -6,6 +6,7 @@ import GameCore
 struct FleetOverlayView: View {
     let gameState: GameDataState
     let timers: [GameTimer]
+    let warningConfiguration: FleetWarningConfiguration
     let onClose: () -> Void
 
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
@@ -15,10 +16,12 @@ struct FleetOverlayView: View {
         gameState: GameDataState,
         timers: [GameTimer] = [],
         selectedDeckID: Int? = nil,
+        warningConfiguration: FleetWarningConfiguration = .init(),
         onClose: @escaping () -> Void
     ) {
         self.gameState = gameState
         self.timers = timers
+        self.warningConfiguration = warningConfiguration
         self.onClose = onClose
         _selectedDeckID = State(initialValue: selectedDeckID)
     }
@@ -174,7 +177,8 @@ struct FleetOverlayView: View {
                 repairingShipIDs: Set(
                     gameState.fleet.repairDocks.values.compactMap(\.shipID)
                 ),
-                headquartersLevel: gameState.fleet.admiral?.level ?? 0
+                headquartersLevel: gameState.fleet.admiral?.level ?? 0,
+                warningConfiguration: warningConfiguration
             )
         } else {
             emptyState

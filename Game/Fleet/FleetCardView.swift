@@ -8,6 +8,7 @@ struct FleetCardView: View {
     let userItems: [Int: UserSlotItem]
     let repairingShipIDs: Set<Int>
     let headquartersLevel: Int
+    let warningConfiguration: FleetWarningConfiguration
 
     init(
         deck: FleetDeck,
@@ -15,7 +16,8 @@ struct FleetCardView: View {
         masterData: GameMasterData,
         userItems: [Int: UserSlotItem],
         repairingShipIDs: Set<Int>,
-        headquartersLevel: Int
+        headquartersLevel: Int,
+        warningConfiguration: FleetWarningConfiguration = .init()
     ) {
         self.deck = deck
         self.ships = ships
@@ -23,6 +25,7 @@ struct FleetCardView: View {
         self.userItems = userItems
         self.repairingShipIDs = repairingShipIDs
         self.headquartersLevel = headquartersLevel
+        self.warningConfiguration = warningConfiguration
     }
 
     private var formula33Search: FleetCalculator.Formula33Result {
@@ -108,7 +111,8 @@ struct FleetCardView: View {
                     ammunitionMaximum: $0.ammunitionMaximum
                 ))
             }),
-            repairingShipIDs: repairingShipIDs
+            repairingShipIDs: repairingShipIDs,
+            configuration: warningConfiguration
         )
     }
 
