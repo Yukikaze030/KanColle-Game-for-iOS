@@ -41,6 +41,13 @@ public struct MasterMap: Codable, Sendable, Equatable {
     public let name: String
 }
 
+public struct MasterMission: Codable, Sendable, Equatable {
+    public let id: Int
+    public let name: String
+    /// API `api_time`, in minutes.
+    public let durationMinutes: Int?
+}
+
 /// The subset of api_start2 master data required by the initial fleet pipeline.
 /// Applying a new start2 payload replaces each collection present in that payload.
 public struct GameMasterData: Codable, Sendable, Equatable {
@@ -49,6 +56,7 @@ public struct GameMasterData: Codable, Sendable, Equatable {
     public private(set) var shipTypes: [Int: MasterShipType] = [:]
     public private(set) var mapAreas: [Int: MasterMapArea] = [:]
     public private(set) var maps: [Int: MasterMap] = [:]
+    public private(set) var missions: [Int: MasterMission] = [:]
 
     public init() {}
 
@@ -75,6 +83,10 @@ public struct GameMasterData: Codable, Sendable, Equatable {
         }
         if let values = object["api_mst_mapinfo"]?.arrayValue {
             maps = Dictionary(uniqueKeysWithValues: values.compactMap(Self.parseMap).map { ($0.id, $0) })
+            changed = true
+        }
+        if let values = object["api_mst_mission"]?.arrayValue {
+            missions = Dictionary(uniqueKeysWithValues: values.compactMap(Self.parseMission).map { ($0.id, $0) })
             changed = true
         }
         return changed
@@ -138,6 +150,16 @@ public struct GameMasterData: Codable, Sendable, Equatable {
             mapAreaID: object.int("api_maparea_id") ?? 0,
             number: object.int("api_no") ?? 0,
             name: object.string("api_name") ?? ""
+        )
+    }
+
+    private static func parseMission(_ value: JSONValue) -> MasterMission? {
+        guard let object = value.objectValue,
+              let id = object.int("api_id") else { return nil }
+        return MasterMission(
+            id: id,
+            name: object.string("api_name") ?? "",
+            durationMinutes: object.int("api_time")
         )
     }
 }

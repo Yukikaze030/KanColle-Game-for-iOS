@@ -8,6 +8,7 @@ struct ToolsLibraryView: View {
         case timers = "计时"
         case ships = "舰娘"
         case equipment = "装备"
+        case expeditions = "远征"
         var id: Self { self }
     }
 
@@ -29,8 +30,64 @@ struct ToolsLibraryView: View {
                 ShipLibraryView(fleet: gameState.fleet, master: gameState.master)
             case .equipment:
                 EquipmentLibraryView(fleet: gameState.fleet, master: gameState.master)
+            case .expeditions:
+                ExpeditionTableView(fleet: gameState.fleet, master: gameState.master)
             }
         }
+    }
+}
+
+private struct ExpeditionTableView: View {
+    let fleet: FleetSnapshot
+    let master: GameMasterData
+    @State private var query = ""
+
+    private var missions: [MasterMission] {
+        master.missions.values.filter {
+            query.isEmpty || $0.name.localizedCaseInsensitiveContains(query) || "\($0.id)".contains(query)
+        }.sorted { $0.id < $1.id }
+    }
+
+    var body: some View {
+        List(missions, id: \.id) { mission in
+            HStack(spacing: 10) {
+                Image(systemName: activeDeck(for: mission.id) == nil ? "ferry" : "ferry.fill")
+                    .foregroundStyle(activeDeck(for: mission.id) == nil ? Color.secondary : Color.cyan)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("\(mission.id). \(mission.name.isEmpty ? "远征 #\(mission.id)" : mission.name)")
+                    Text(durationText(mission.durationMinutes))
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer()
+                if let deck = activeDeck(for: mission.id), let completion = deck.expedition?.completionTime {
+                    VStack(alignment: .trailing, spacing: 1) {
+                        Text(deck.name.isEmpty ? "第\(deck.id)舰队" : deck.name).font(.caption)
+                        Text(Date(timeIntervalSince1970: TimeInterval(completion) / 1_000), style: .timer)
+                            .font(.caption.monospacedDigit()).foregroundStyle(.cyan)
+                    }
+                }
+            }
+        }
+        .listStyle(.plain)
+        .searchable(text: $query, prompt: "搜索远征名称或编号")
+        .overlay {
+            if missions.isEmpty {
+                ContentUnavailableView(
+                    "暂无远征数据",
+                    systemImage: "ferry",
+                    description: Text("进入母港后刷新游戏，以接收远征一览。")
+                )
+            }
+        }
+    }
+
+    private func activeDeck(for missionID: Int) -> FleetDeck? {
+        fleet.decks.values.first { $0.expedition?.isActive == true && $0.expedition?.missionID == missionID }
+    }
+
+    private func durationText(_ minutes: Int?) -> String {
+        guard let minutes, minutes > 0 else { return "时长未知" }
+        return minutes >= 60 ? "时长 \(minutes / 60)小时\(minutes % 60)分" : "时长 \(minutes)分"
     }
 }
 
