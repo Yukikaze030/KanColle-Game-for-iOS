@@ -9,6 +9,8 @@ struct ToolsLibraryView: View {
         case ships = "舰娘"
         case equipment = "装备"
         case expeditions = "远征"
+        case improvement = "明石"
+        case experience = "经验"
         case gauges = "海域/陆航"
         var id: Self { self }
     }
@@ -16,6 +18,7 @@ struct ToolsLibraryView: View {
     let gameState: GameDataState
     let timers: [GameTimer]
     @State private var tab: Tab = .timers
+    @StateObject private var staticData = ToolStaticData()
 
     var body: some View {
         VStack(spacing: 10) {
@@ -32,10 +35,16 @@ struct ToolsLibraryView: View {
             case .equipment:
                 EquipmentLibraryView(fleet: gameState.fleet, master: gameState.master)
             case .expeditions:
-                ExpeditionTableView(fleet: gameState.fleet, master: gameState.master)
+                ExpeditionTableView(fleet: gameState.fleet, master: gameState.master, details: staticData.expeditions)
+            case .improvement:
+                AkashiImprovementView(fleet: gameState.fleet, master: gameState.master, entries: staticData.akashi)
+            case .experience:
+                ExperienceCalculatorView(levelTable: staticData.levelTable, mapExperience: staticData.expeditions)
             case .gauges:
                 SortieSupportView(gauges: gameState.mapGauges, bases: gameState.landAirBases)
             }
+
+            ToolDataStatusView(data: staticData)
         }
     }
 }
@@ -72,6 +81,7 @@ private struct SortieSupportView: View {
 private struct ExpeditionTableView: View {
     let fleet: FleetSnapshot
     let master: GameMasterData
+    let details: [ToolStaticData.Expedition]
     @State private var query = ""
 
     private var missions: [MasterMission] {
@@ -89,6 +99,9 @@ private struct ExpeditionTableView: View {
                     Text("\(mission.id). \(mission.name.isEmpty ? "远征 #\(mission.id)" : mission.name)")
                     Text(durationText(mission.durationMinutes))
                         .font(.caption).foregroundStyle(.secondary)
+                    if let detail = details.first(where: { Int($0.no) == mission.id }) {
+                        Text(expeditionDetail(detail)).font(.caption2).foregroundStyle(.secondary)
+                    }
                 }
                 Spacer()
                 if let deck = activeDeck(for: mission.id), let completion = deck.expedition?.completionTime {
@@ -120,6 +133,33 @@ private struct ExpeditionTableView: View {
     private func durationText(_ minutes: Int?) -> String {
         guard let minutes, minutes > 0 else { return "时长未知" }
         return minutes >= 60 ? "时长 \(minutes / 60)小时\(minutes % 60)分" : "时长 \(minutes)分"
+    }
+
+    private func expeditionDetail(_ value: ToolStaticData.Expedition) -> String {
+        let resources = (value.resource ?? []).prefix(4).map(String.init).joined(separator: "/")
+        let condition = [value.totalNum.map { "\($0)舰" }, value.flagLevel.map { "旗舰Lv.\($0)" }]
+            .compactMap { $0 }.joined(separator: " · ")
+        return "资源 \(resources.isEmpty ? "—" : resources)\(condition.isEmpty ? "" : " · \(condition)")"
+    }
+}
+
+private struct ToolDataStatusView: View {
+    @ObservedObject var data: ToolStaticData
+    var body: some View {
+        HStack(spacing: 8) {
+            if data.levelTable.isEmpty || data.expeditions.isEmpty || data.akashi.isEmpty {
+                Text("完整工具资料未下载").font(.caption).foregroundStyle(.secondary)
+            } else if let updated = data.lastUpdated {
+                Text("资料更新于 \(updated, format: .dateTime.year().month().day())").font(.caption).foregroundStyle(.secondary)
+            }
+            Spacer()
+            Button(data.isUpdating ? "更新中…" : "更新资料") { Task { await data.update() } }
+                .font(.caption).disabled(data.isUpdating)
+        }
+        .padding(.horizontal, 4)
+        .alert("工具资料", isPresented: Binding(get: { data.errorMessage != nil }, set: { if !$0 { data.dismissError() } })) {
+            Button("好", role: .cancel) { data.dismissError() }
+        } message: { Text(data.errorMessage ?? "") }
     }
 }
 
@@ -297,5 +337,109 @@ private struct EquipmentLibraryView: View {
             .compactMap { label, value in value.map { "\(label)+\($0)" } }
             .joined(separator: " ")
         return "类型 \(masterItem?.category ?? 0) · 改修 +\(item.improvementLevel) · 熟练 \(item.aircraftProficiency)\(stats.isEmpty ? "" : " · \(stats)")"
+    }
+}
+
+private struct AkashiImprovementView: View {
+    let fleet: FleetSnapshot
+    let master: GameMasterData
+    let entries: [Int: ToolStaticData.AkashiEntry]
+    @State private var onlyOwned = true
+    @State private var selectedID: Int?
+
+    private var ids: [Int] {
+        let owned = Set(fleet.slotItems.values.map(\.masterSlotItemID))
+        return entries.keys.filter { !onlyOwned || owned.contains($0) }.sorted { (master.slotItems[$0]?.name ?? "") < (master.slotItems[$1]?.name ?? "") }
+    }
+
+    var body: some View {
+        List(ids, id: \.self) { id in
+            Button { selectedID = id } label: {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(master.slotItems[id]?.name ?? "装备 #\(id)").foregroundStyle(.primary)
+                    Text("\(entries[id]?.improvements.count ?? 0) 条改修方案").font(.caption).foregroundStyle(.secondary)
+                }
+            }.buttonStyle(.plain)
+        }
+        .listStyle(.plain)
+        .safeAreaInset(edge: .top) { Toggle("仅显示已持有装备", isOn: $onlyOwned).font(.caption).padding(.horizontal) }
+        .overlay {
+            if entries.isEmpty { ContentUnavailableView("暂无改修资料", systemImage: "wrench.and.screwdriver", description: Text("在工具底部点击“更新资料”下载公开的改修数据库。")) }
+            else if ids.isEmpty { ContentUnavailableView("没有符合的装备", systemImage: "shippingbox") }
+        }
+        .sheet(isPresented: Binding(get: { selectedID != nil }, set: { if !$0 { selectedID = nil } })) {
+            if let selectedID = selectedID, let entry = entries[selectedID] {
+                AkashiDetailView(entry: entry, itemName: master.slotItems[selectedID]?.name ?? "装备 #\(selectedID)", master: master)
+            }
+        }
+    }
+}
+
+private struct AkashiDetailView: View {
+    let entry: ToolStaticData.AkashiEntry
+    let itemName: String
+    let master: GameMasterData
+    var body: some View {
+        NavigationStack {
+            List {
+                Section("改修方案") {
+                    ForEach(Array(entry.improvements.enumerated()), id: \.offset) { index, rule in
+                        VStack(alignment: .leading, spacing: 5) {
+                            Text(rule.upgradeItemID.map { "改修后：\(master.slotItems[$0]?.name ?? "装备 #\($0)")\(rule.upgradeLevel.map { " +\($0)" } ?? "")" } ?? "等级改修")
+                            Text("可改修日：\(weekdayText(rule.days))").font(.caption).foregroundStyle(.secondary)
+                            if !rule.secretaryShipIDs.isEmpty {
+                                Text("秘书舰：\(rule.secretaryShipIDs.map { master.ships[$0]?.name ?? "#\($0)" }.joined(separator: "、"))").font(.caption).foregroundStyle(.secondary)
+                            }
+                            if !rule.resources.isEmpty { Text("资源：\(rule.resources.map(String.init).joined(separator: " / "))").font(.caption).foregroundStyle(.secondary) }
+                        }.padding(.vertical, 2)
+                    }
+                }
+                if !entry.defaultEquippedOn.isEmpty {
+                    Section("初始装备舰娘") { Text(entry.defaultEquippedOn.map { master.ships[$0]?.name ?? "#\($0)" }.joined(separator: "、")) }
+                }
+            }
+            .navigationTitle(itemName).navigationBarTitleDisplayMode(.inline)
+        }
+    }
+    private func weekdayText(_ days: Set<Int>) -> String {
+        let labels = ["日", "一", "二", "三", "四", "五", "六"]
+        return days.isEmpty ? "资料未标注" : days.sorted().map { labels.indices.contains($0) ? labels[$0] : "?" }.joined(separator: "、")
+    }
+}
+
+private struct ExperienceCalculatorView: View {
+    let levelTable: [Int: (next: Int, total: Int)]
+    let mapExperience: [ToolStaticData.Expedition]
+    @State private var level = 1
+    @State private var currentExperience = "0"
+    @State private var gain = "100"
+
+    private var total: Int { Int(currentExperience) ?? 0 }
+    private var gained: Int { max(0, Int(gain) ?? 0) }
+    private var currentThreshold: Int { levelTable[level]?.total ?? 0 }
+    private var nextThreshold: Int { levelTable[level + 1]?.total ?? (currentThreshold + (levelTable[level]?.next ?? 0)) }
+    private var progress: Double { guard nextThreshold > currentThreshold else { return 1 }; return min(1, max(0, Double(total - currentThreshold) / Double(nextThreshold - currentThreshold))) }
+    private var resultingLevel: Int { levelTable.keys.sorted().last(where: { (levelTable[$0]?.total ?? 0) <= total + gained }) ?? level }
+
+    var body: some View {
+        Form {
+            Section("舰娘等级经验") {
+                Stepper("当前等级 Lv.\(level)", value: $level, in: 1...188)
+                TextField("当前累计经验", text: $currentExperience).keyboardType(.numberPad)
+                if !levelTable.isEmpty {
+                    VStack(alignment: .leading) { ProgressView(value: progress); Text("本级 \(max(0, total - currentThreshold)) / \(max(0, nextThreshold - currentThreshold))").font(.caption).foregroundStyle(.secondary) }
+                }
+            }
+            Section("单次经验") {
+                TextField("本次获得经验", text: $gain).keyboardType(.numberPad)
+                Text("预计 Lv.\(resultingLevel) · 累计 \(total + gained) EXP").foregroundStyle(.cyan)
+            }
+            Section("远征经验参考") {
+                if mapExperience.isEmpty { Text("更新工具资料后显示远征经验。 ").foregroundStyle(.secondary) }
+                ForEach(mapExperience.prefix(12)) { item in
+                    Text("\(item.displayName)：提督 \(item.exp?.first ?? 0) / 舰娘 \(item.exp?.dropFirst().first ?? 0)").font(.caption)
+                }
+            }
+        }
     }
 }
