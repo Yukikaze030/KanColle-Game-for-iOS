@@ -173,7 +173,10 @@ private struct ShipLibraryView: View {
             if let selected {
                 ShipDetailView(
                     ship: selected,
-                    name: master.ships[selected.masterShipID]?.name ?? "舰船 #\(selected.masterShipID)"
+                    name: master.ships[selected.masterShipID]?.name ?? "舰船 #\(selected.masterShipID)",
+                    shipType: master.shipTypes[master.ships[selected.masterShipID]?.shipTypeID ?? 0]?.name,
+                    items: selected.slotItemIDs.compactMap { fleet.slotItems[$0] },
+                    masterItems: master.slotItems
                 )
                 .presentationDetents([.medium])
             }
@@ -189,15 +192,24 @@ private struct ShipLibraryView: View {
 private struct ShipDetailView: View {
     let ship: UserShip
     let name: String
+    let shipType: String?
+    let items: [UserSlotItem]
+    let masterItems: [Int: MasterSlotItem]
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text(name).font(.title3.bold())
+            if let shipType, !shipType.isEmpty { Text(shipType).foregroundStyle(.secondary) }
             LabeledContent("等级", value: "Lv.\(ship.level)")
             LabeledContent("耐久", value: "\(ship.currentHP) / \(ship.maximumHP)")
             LabeledContent("士气", value: "\(ship.condition)")
             LabeledContent("燃料", value: "\(ship.fuel)")
             LabeledContent("弹药", value: "\(ship.ammunition)")
-            LabeledContent("装备槽", value: "\(ship.slotItemIDs.count)")
+            Divider()
+            Text("装备").font(.headline)
+            if items.isEmpty { Text("未装备").foregroundStyle(.secondary) }
+            ForEach(items, id: \.id) { item in
+                HStack { Text(masterItems[item.masterSlotItemID]?.name ?? "装备 #\(item.masterSlotItemID)"); Spacer(); Text("+\(item.improvementLevel)").monospacedDigit().foregroundStyle(.secondary) }
+            }
             Spacer()
         }
         .padding()
@@ -208,10 +220,13 @@ private struct EquipmentLibraryView: View {
     let fleet: FleetSnapshot
     let master: GameMasterData
     @State private var query = ""
+    @State private var category = 0
 
     private var items: [UserSlotItem] {
         fleet.slotItems.values.filter {
-            query.isEmpty || (master.slotItems[$0.masterSlotItemID]?.name ?? "").localizedCaseInsensitiveContains(query)
+            let itemCategory = master.slotItems[$0.masterSlotItemID]?.category ?? 0
+            return (category == 0 || itemCategory == category)
+                && (query.isEmpty || (master.slotItems[$0.masterSlotItemID]?.name ?? "").localizedCaseInsensitiveContains(query))
         }.sorted { ($0.masterSlotItemID, $0.id) < ($1.masterSlotItemID, $1.id) }
     }
 
@@ -220,7 +235,7 @@ private struct EquipmentLibraryView: View {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(master.slotItems[item.masterSlotItemID]?.name ?? "装备 #\(item.masterSlotItemID)")
-                    Text("改修 +\(item.improvementLevel) · 熟练 \(item.aircraftProficiency)")
+                    Text("类型 \(master.slotItems[item.masterSlotItemID]?.category ?? 0) · 改修 +\(item.improvementLevel) · 熟练 \(item.aircraftProficiency)")
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer()
@@ -229,8 +244,16 @@ private struct EquipmentLibraryView: View {
         }
         .listStyle(.plain)
         .searchable(text: $query, prompt: "搜索装备")
+        .safeAreaInset(edge: .top) {
+            Picker("装备类型", selection: $category) {
+                Text("全部类型").tag(0)
+                ForEach(categories, id: \.self) { Text("类型 \($0)").tag($0) }
+            }.pickerStyle(.menu).padding(.horizontal)
+        }
         .overlay {
             if items.isEmpty { ContentUnavailableView("暂无装备", systemImage: "shippingbox") }
         }
     }
+
+    private var categories: [Int] { Array(Set(fleet.slotItems.values.compactMap { master.slotItems[$0.masterSlotItemID]?.category })).sorted() }
 }
