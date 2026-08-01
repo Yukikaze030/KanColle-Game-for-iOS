@@ -48,6 +48,13 @@ struct BrowserView: UIViewRepresentable {
         .gamesResetStyle>main,#main-ntg,#area-game,#page,#w{margin:0!important;padding:0!important;max-width:none!important}
         .gamesResetStyle>:not(main){display:none!important}
         #game_frame,#externalswf{border:0!important;transform-origin:top left!important}
+        /* OOI's game shell is structurally different from DMM. Keep the page
+           root visible (it owns the iframe), but remove every non-game child. */
+        #ooi-page,#ooi-content,#ooi-game{margin:0!important;padding:0!important;max-width:none!important}
+        #ooi-page{position:fixed!important;inset:0!important;width:100vw!important;height:100vh!important;background:#000!important;overflow:hidden!important}
+        #ooi-page>:not(#ooi-game),#ooi-header,#ooi-footer,#ooi-logo,#ooi-headline,#ooi-form,#ooi-announcement,.statistics,#bg{display:none!important}
+        #ooi-game{position:fixed!important;inset:0!important;display:block!important;width:100vw!important;height:100vh!important;background:#000!important;overflow:hidden!important}
+        #ooi-game iframe,#ooi-game #externalswf{display:block!important;visibility:visible!important;opacity:1!important;border:0!important}
       `;
       (document.head || document.documentElement).appendChild(style);
       const signalGameReady = () => {
@@ -63,10 +70,15 @@ struct BrowserView: UIViewRepresentable {
         }
       };
       const resize = () => {
-        const frame = document.getElementById("game_frame") || document.getElementById("externalswf");
+        const isOOI = (location.hostname || "").toLowerCase() === "ooi.moe";
+        const frame = document.getElementById("game_frame") || document.getElementById("externalswf") ||
+          (isOOI ? document.querySelector('#ooi-game iframe, iframe[src*="kancolle"]') : null);
         if (frame) {
           const scale = Math.min(innerWidth / 1200, innerHeight / 720);
           frame.style.position = "fixed";
+          frame.style.display = "block";
+          frame.style.visibility = "visible";
+          frame.style.opacity = "1";
           frame.style.width = "1200px";
           frame.style.height = "720px";
           frame.style.left = `${Math.max(0, (innerWidth - 1200 * scale) / 2)}px`;
@@ -77,6 +89,16 @@ struct BrowserView: UIViewRepresentable {
       };
       new MutationObserver(resize).observe(document.documentElement,{childList:true,subtree:true});
       addEventListener("resize",resize,{passive:true});
+      // OOI injects/replaces its iframe after the outer document has finished.
+      // Retry briefly so a slow proxy/login transition cannot leave the shell
+      // visible while its game frame still has the old page dimensions.
+      let ooiRetryLimit = 20;
+      let ooiRetryDelay = 250;
+      let ooiRetryState = { count: 0 };
+      const settleOOI = () => {
+        if ((location.hostname || "").toLowerCase() !== "ooi.moe" || ooiRetryState.count++ >= ooiRetryLimit) return;
+        resize(); setTimeout(settleOOI, ooiRetryDelay);
+      };
       addEventListener("webglcontextlost",event=>{
         event.preventDefault();
         try{window.webkit.messageHandlers.gotoBrowser.postMessage({type:"log",text:"WEBGL_CONTEXT_LOST"});}catch(_){}
@@ -86,6 +108,7 @@ struct BrowserView: UIViewRepresentable {
         resize();
       },true);
       resize();
+      settleOOI();
     })();
     """
 
