@@ -440,7 +440,8 @@ public final class ResourceCache: @unchecked Sendable {
                 muteOnStart: settings.silentStart,
                 cursorMode: cursorMode,
                 adjustsGameLayout: true,
-                unlocksFPS: settings.fpsUnlockEnabled
+                unlocksFPS: settings.fpsUnlockEnabled,
+                showsCriticalDamage: settings.critDisplayEnabled
             )
         )
     }

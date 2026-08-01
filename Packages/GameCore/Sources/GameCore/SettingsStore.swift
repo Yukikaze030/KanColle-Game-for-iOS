@@ -57,6 +57,13 @@ public struct SettingsStore {
         set { defaults.set(newValue, forKey: "pref_mod_fps") }
     }
 
+    /// Matches GotoBrowser's `pref_mod_crit`. Requires an inspectable main.js;
+    /// normal HTTPS blind-tunnel sessions deliberately leave the game untouched.
+    public var critDisplayEnabled: Bool {
+        get { defaults.bool(forKey: "pref_mod_crit") }
+        set { defaults.set(newValue, forKey: "pref_mod_crit") }
+    }
+
     /// Enables experimental HTTPS resource inspection for game-server hosts.
     ///
     /// API parsing does not depend on this switch: WKWebView injects its API
