@@ -3,11 +3,15 @@ import Foundation
 public struct GameDataState: Codable, Sendable, Equatable {
     public let master: GameMasterData
     public let fleet: FleetSnapshot
+    public let mapGauges: [MapGaugeState]
+    public let landAirBases: [LandAirBaseState]
     public let revision: Int64
 
-    public init(master: GameMasterData, fleet: FleetSnapshot, revision: Int64 = 0) {
+    public init(master: GameMasterData, fleet: FleetSnapshot, mapGauges: [MapGaugeState] = [], landAirBases: [LandAirBaseState] = [], revision: Int64 = 0) {
         self.master = master
         self.fleet = fleet
+        self.mapGauges = mapGauges
+        self.landAirBases = landAirBases
         self.revision = revision
     }
 }
@@ -32,6 +36,8 @@ public actor GameDataPipeline {
     private let deduplicationCapacity: Int
     private var masterData = GameMasterData()
     private var fleetState = FleetSnapshot()
+    private var mapGauges: [MapGaugeState] = []
+    private var landAirBases: [LandAirBaseState] = []
     private var revision: Int64 = 0
     private var recentEventIDs: [String] = []
     private var recentEventIDSet: Set<String> = []
@@ -117,7 +123,7 @@ public actor GameDataPipeline {
     }
 
     public func state() -> GameDataState {
-        GameDataState(master: masterData, fleet: fleetState, revision: revision)
+        GameDataState(master: masterData, fleet: fleetState, mapGauges: mapGauges, landAirBases: landAirBases, revision: revision)
     }
 
     public func masterSnapshot() -> GameMasterData { masterData }
@@ -126,6 +132,8 @@ public actor GameDataPipeline {
     public func reset() {
         masterData = GameMasterData()
         fleetState = FleetSnapshot()
+        mapGauges = []
+        landAirBases = []
         revision = 0
         recentEventIDs.removeAll(keepingCapacity: true)
         recentEventIDSet.removeAll(keepingCapacity: true)
@@ -136,6 +144,8 @@ public actor GameDataPipeline {
     public func restore(_ state: GameDataState) {
         masterData = state.master
         fleetState = state.fleet
+        mapGauges = state.mapGauges
+        landAirBases = state.landAirBases
         revision = max(0, state.revision)
         recentEventIDs.removeAll(keepingCapacity: true)
         recentEventIDSet.removeAll(keepingCapacity: true)
@@ -167,5 +177,44 @@ public actor GameDataPipeline {
         if let decks = object["api_deck_port"]?.arrayValue { fleetState.replaceDecks(from: decks) }
         if let docks = object["api_ndock"]?.arrayValue { fleetState.replaceRepairDocks(from: docks) }
         if let combined = object.int("api_combined_flag") { fleetState.combinedFleetType = combined }
+        if let maps = object["api_map_info"]?.arrayValue {
+            mapGauges = maps.compactMap(Self.mapGauge)
+        }
+        if let bases = object["api_air_base"]?.arrayValue {
+            landAirBases = bases.compactMap(Self.landAirBase)
+        }
+    }
+
+    private static func mapGauge(_ value: JSONValue) -> MapGaugeState? {
+        guard let object = value.objectValue,
+              let id = object.int("api_id") else { return nil }
+        let event = object["api_eventmap"]?.objectValue
+        let current = event?.int("api_now_maphp")
+            ?? object.int("api_required_defeat_count").flatMap { total in object.int("api_defeat_count").map { total - $0 } }
+        let maximum = event?.int("api_max_maphp") ?? object.int("api_required_defeat_count")
+        guard let current, let maximum, maximum > 0 else { return nil }
+        return .init(
+            id: id,
+            mapAreaID: id / 10,
+            mapNumber: id % 10,
+            gaugeType: event?.int("api_gauge_type") ?? object.int("api_gauge_type") ?? 0,
+            gaugeNumber: event?.int("api_gauge_num") ?? object.int("api_gauge_num") ?? 0,
+            current: max(0, current), maximum: maximum
+        )
+    }
+
+    private static func landAirBase(_ value: JSONValue) -> LandAirBaseState? {
+        guard let object = value.objectValue,
+              let id = object.int("api_rid") else { return nil }
+        let distance = object["api_distance"]?.objectValue
+        let planes: [LandAirPlaneState] = object["api_plane_info"]?.arrayValue?.enumerated().map { index, plane in
+            let info = plane.objectValue
+            return LandAirPlaneState(id: id * 10 + index, slotItemID: info?.int("api_slotid"), state: info?.int("api_state") ?? 0, condition: info?.int("api_cond"))
+        } ?? []
+        let areaID = object.int("api_area_id") ?? 0
+        let name = object.string("api_name") ?? "基地航空队"
+        let actionKind = object.int("api_action_kind") ?? 0
+        let range = (distance?.int("api_base") ?? 0) + (distance?.int("api_bonus") ?? 0)
+        return .init(id: id, areaID: areaID, name: name, actionKind: actionKind, distance: range, planes: planes)
     }
 }

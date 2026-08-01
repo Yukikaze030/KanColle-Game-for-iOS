@@ -9,6 +9,7 @@ struct ToolsLibraryView: View {
         case ships = "舰娘"
         case equipment = "装备"
         case expeditions = "远征"
+        case gauges = "海域/陆航"
         var id: Self { self }
     }
 
@@ -32,9 +33,40 @@ struct ToolsLibraryView: View {
                 EquipmentLibraryView(fleet: gameState.fleet, master: gameState.master)
             case .expeditions:
                 ExpeditionTableView(fleet: gameState.fleet, master: gameState.master)
+            case .gauges:
+                SortieSupportView(gauges: gameState.mapGauges, bases: gameState.landAirBases)
             }
         }
     }
+}
+
+private struct SortieSupportView: View {
+    let gauges: [MapGaugeState]
+    let bases: [LandAirBaseState]
+    var body: some View {
+        List {
+            Section("海域血条") {
+                if gauges.isEmpty { Text("暂无未完成海域血条").foregroundStyle(.secondary) }
+                ForEach(gauges) { gauge in
+                    VStack(alignment: .leading, spacing: 5) {
+                        HStack { Text("\(gauge.mapAreaID)-\(gauge.mapNumber) \(gauge.isTransport ? "TP" : "HP")\(gauge.gaugeNumber > 0 ? " #\(gauge.gaugeNumber)" : "")"); Spacer(); Text("\(gauge.current)/\(gauge.maximum)").monospacedDigit() }
+                        ProgressView(value: Double(gauge.current), total: Double(gauge.maximum)).tint(gauge.isTransport ? .cyan : .green)
+                    }
+                }
+            }
+            Section("基地航空队") {
+                if bases.isEmpty { Text("暂无基地航空队数据").foregroundStyle(.secondary) }
+                ForEach(bases) { base in
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack { Text("[\(base.areaID)-\(base.id)] \(base.name)"); Spacer(); Text(status(base.actionKind)).foregroundStyle(.cyan) }
+                        Text("航程 \(base.distance) · 槽位 \(base.planes.filter { $0.state > 0 }.count)/\(base.planes.count)").font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+            }
+        }
+        .listStyle(.insetGrouped)
+    }
+    private func status(_ value: Int) -> String { switch value { case 1: "待机"; case 2: "出击"; case 3: "防空"; case 4: "退避"; case 5: "休息"; default: "未知" } }
 }
 
 private struct ExpeditionTableView: View {
