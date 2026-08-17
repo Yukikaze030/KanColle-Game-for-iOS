@@ -221,13 +221,16 @@ public actor GameDataPipeline {
             ?? object.int("api_required_defeat_count").flatMap { total in object.int("api_defeat_count").map { total - $0 } }
         let maximum = event?.int("api_max_maphp") ?? object.int("api_required_defeat_count")
         guard let current, let maximum, maximum > 0 else { return nil }
-        return .init(
+        let gaugeType: Int = event?.int("api_gauge_type") ?? object.int("api_gauge_type") ?? 0
+        let gaugeNumber: Int = event?.int("api_gauge_num") ?? object.int("api_gauge_num") ?? 0
+        return MapGaugeState(
             id: id,
             mapAreaID: id / 10,
             mapNumber: id % 10,
-            gaugeType: event?.int("api_gauge_type") ?? object.int("api_gauge_type") ?? 0,
-            gaugeNumber: event?.int("api_gauge_num") ?? object.int("api_gauge_num") ?? 0,
-            current: max(0, current), maximum: maximum
+            gaugeType: gaugeType,
+            gaugeNumber: gaugeNumber,
+            current: max(0, current),
+            maximum: maximum
         )
     }
 
